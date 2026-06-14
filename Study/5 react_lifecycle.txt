@@ -1,0 +1,473 @@
+================================================================================
+REACT — COMPONENT LIFECYCLE (MOUNTING, UPDATING, UNMOUNTING)
+================================================================================
+
+--------------------------------------------------------------------------------
+THINGS YOU SHOULD KNOW FIRST
+--------------------------------------------------------------------------------
+
+--- What a Lifecycle Is ---
+
+Technical definition:
+  A component lifecycle is the sequence of stages a React component goes
+  through from when it is first created and added to the DOM, through any
+  updates it undergoes, until it is finally removed from the DOM. Each stage
+  provides an opportunity to run code at a specific moment in that sequence.
+
+Simple way:
+  Every component has a life — it is born (mounting), it may change over time
+  (updating), and eventually it dies (unmounting). React gives you hooks into
+  each of those moments so you can run code at the right time.
+
+
+--- What Mounting and Unmounting Mean ---
+
+Technical definition:
+  Mounting is the process of a component being instantiated and its output
+  being inserted into the real DOM for the first time.
+  Unmounting is the process of a component being removed from the real DOM
+  and its resources being released.
+
+Simple way:
+  Mounting = the component appears on the page for the first time.
+  Unmounting = the component disappears from the page completely.
+
+
+--- Commit Phase vs Render Phase ---
+
+Technical definition:
+  React splits its work into two internal phases:
+  Render phase: React calls the component function, builds the new Virtual DOM
+    snapshot, and diffs it against the previous one. This phase is pure —
+    no side effects happen here.
+  Commit phase: React applies the calculated DOM changes to the real DOM.
+    After this phase, useEffect and lifecycle methods run.
+
+Simple way:
+  React first figures out WHAT changed (render phase — pure, no side effects).
+  Then it applies those changes to the real page (commit phase).
+  Only after the commit phase does React run your useEffect code.
+
+
+--- Two Approaches to Lifecycle ---
+
+  Class components  → explicit lifecycle methods (componentDidMount, etc.)
+  Function components → useEffect hook mimics all lifecycle stages
+
+  Both achieve the same results. This document covers both because you may
+  encounter class components in older codebases and need to understand them,
+  but the modern approach is function components + useEffect.
+
+--------------------------------------------------------------------------------
+1. THE THREE PHASES — OVERVIEW
+--------------------------------------------------------------------------------
+
+  Every component goes through these three phases in order:
+
+  ┌─────────────────────────────────────────────────────────┐
+  │  MOUNTING           UPDATING              UNMOUNTING     │
+  │  (born)             (changes)             (removed)      │
+  │                                                          │
+  │  Component        State or Props        Component        │
+  │  added to DOM  →  change → re-render →  removed         │
+  │                   (can repeat           from DOM         │
+  │                    many times)                           │
+  └─────────────────────────────────────────────────────────┘
+
+  Mounting happens once.
+  Updating can happen zero or many times.
+  Unmounting happens once at the end.
+
+--------------------------------------------------------------------------------
+2. PHASE 1 — MOUNTING
+--------------------------------------------------------------------------------
+
+Technical definition:
+  The mounting phase begins when React creates a component instance for the
+  first time and ends after the component's output has been committed to the
+  real DOM and any post-mount side effects have run. In function components,
+  this is when the function is first called and useEffect callbacks with an
+  empty dependency array ([]) execute.
+
+Simple way:
+  Mounting is the moment a component is born and placed on the page.
+  This happens when:
+  - The app first loads and renders the component
+  - A parent conditionally renders the component for the first time
+  - You navigate to a page that contains the component
+
+--- What happens during mounting (step by step) ---
+
+  Step 1 — Component function is called for the first time
+    React calls your function component. All the code at the top level runs:
+    useState initialises with its initial value, variables are declared, etc.
+
+  Step 2 — JSX is returned and the Virtual DOM is built
+    The function returns JSX. React creates a Virtual DOM representation.
+
+  Step 3 — React commits to the real DOM
+    React inserts the actual HTML elements into the real browser DOM.
+    The component is now visible on screen.
+
+  Step 4 — useEffect with [] runs (post-mount)
+    After the DOM is updated and the browser has painted, React runs any
+    useEffect callbacks whose dependency array is empty.
+    This is the right place for: fetching initial data, setting up
+    subscriptions, starting timers, or any setup that needs the DOM to exist.
+
+--- Function component example ---
+
+  function UserProfile({ userId }) {
+    const [user, setUser] = useState(null);
+    // Step 1: useState initialises with null
+
+    useEffect(() => {
+      // Step 4: runs ONCE after first render — mounting
+      console.log("Component mounted");
+      fetch(`/api/users/${userId}`)
+        .then(r => r.json())
+        .then(data => setUser(data));  // triggers an update after fetch
+    }, []);
+    // Empty [] means: only run on mount, never again
+
+    return <div>{user ? user.name : "Loading..."}</div>;
+    // Step 2 + 3: JSX returned, committed to DOM
+  }
+
+--- Class component equivalent ---
+
+  class UserProfile extends React.Component {
+    constructor(props) {
+      super(props);
+      this.state = { user: null };  // Step 1: initialise state
+    }
+
+    componentDidMount() {
+      // Step 4: runs once after first render — mounting
+      console.log("Component mounted");
+      fetch(`/api/users/${this.props.userId}`)
+        .then(r => r.json())
+        .then(data => this.setState({ user: data }));
+    }
+
+    render() {
+      return <div>{this.state.user ? this.state.user.name : "Loading..."}</div>;
+      // Step 2 + 3: JSX returned, committed to DOM
+    }
+  }
+
+  componentDidMount() is the class equivalent of useEffect(() => {}, []).
+  Both run once after the first render.
+
+--------------------------------------------------------------------------------
+3. PHASE 2 — UPDATING
+--------------------------------------------------------------------------------
+
+Technical definition:
+  The updating phase occurs whenever the component's state changes (via
+  useState setter or this.setState) or when the props it receives from its
+  parent change. React re-runs the component function, diffs the new Virtual
+  DOM against the previous one, and commits only the changed parts to the real
+  DOM. After the commit, useEffect callbacks whose dependencies have changed
+  run again.
+
+Simple way:
+  Updating is the component reacting to changes. Something changed — a user
+  typed something, data came back from an API, a parent sent new props — so
+  React re-runs the component to recalculate what to show, updates only the
+  changed parts of the page, and then runs any effects whose watched values
+  changed.
+
+--- What triggers an update ---
+
+  1. setState (useState setter) is called inside the component
+  2. A parent re-renders, passing new prop values to this component
+  3. Context value changes and this component reads that context
+
+--- What happens during updating (step by step) ---
+
+  Step 1 — Component function is called again
+    React re-runs the entire function. useState returns the current state value
+    (not the initial value). All code at the top level re-executes.
+
+  Step 2 — JSX is returned and diffed
+    The function returns new JSX. React compares it against the previous
+    Virtual DOM snapshot (diffing).
+
+  Step 3 — Only changed parts are committed
+    React updates only the DOM nodes that actually changed.
+    Unchanged parts are left untouched.
+
+  Step 4 — useEffect with changed dependencies runs
+    If a useEffect has a dependency array and one of those values changed,
+    its callback runs again. Before running the new callback, React first
+    runs the PREVIOUS callback's cleanup function (if one was returned).
+
+--- Function component example ---
+
+  function Counter() {
+    const [count, setCount] = useState(0);
+
+    useEffect(() => {
+      // runs after EVERY render where count changed
+      console.log("Count updated to:", count);
+      document.title = `Count: ${count}`;
+    }, [count]);
+    // [count] means: re-run this effect when count changes
+
+    return (
+      <button onClick={() => setCount(count + 1)}>
+        Count: {count}
+      </button>
+    );
+  }
+
+  First render (mounting): count = 0, effect runs, title = "Count: 0"
+  Click button (updating): count = 1, effect runs again, title = "Count: 1"
+  Click button (updating): count = 2, effect runs again, title = "Count: 2"
+
+--- Class component equivalent ---
+
+  componentDidUpdate(prevProps, prevState) {
+    // runs after every re-render (update)
+    // prevProps and prevState hold the PREVIOUS values
+    if (prevState.count !== this.state.count) {
+      console.log("Count updated to:", this.state.count);
+      document.title = `Count: ${this.state.count}`;
+    }
+  }
+
+  Important: in class components you must manually check if the value
+  actually changed using prevState / prevProps. In useEffect, the dependency
+  array handles this automatically.
+
+--- shouldComponentUpdate (class only — performance) ---
+
+Technical definition:
+  shouldComponentUpdate is a class lifecycle method that runs before every
+  re-render. It returns a boolean — if false, React skips the re-render
+  entirely. It is a manual performance optimisation.
+
+Simple way:
+  It lets you tell React "do not re-render this time, nothing meaningful
+  changed." The function component equivalent is React.memo — it wraps a
+  component and skips re-rendering if props have not changed.
+
+  React.memo example:
+  const Child = React.memo(function Child({ name }) {
+    return <p>{name}</p>;
+  });
+  // Child only re-renders if the name prop actually changes
+
+--------------------------------------------------------------------------------
+4. PHASE 3 — UNMOUNTING
+--------------------------------------------------------------------------------
+
+Technical definition:
+  The unmounting phase occurs when a component is removed from the DOM. This
+  happens when a parent stops rendering it (e.g., via conditional rendering),
+  when the user navigates to a different route, or when the app closes. At
+  this point, the cleanup function returned from useEffect runs, and in class
+  components, componentWillUnmount runs.
+
+Simple way:
+  Unmounting is the component being taken off the page permanently (until it
+  is mounted again). This is your last chance to clean up anything the
+  component started — timers, event listeners, subscriptions — to prevent
+  memory leaks.
+
+--- What happens during unmounting ---
+
+  Step 1 — Parent stops rendering the component
+    e.g., a condition changes: {isLoggedIn && <UserProfile />}
+    If isLoggedIn becomes false, UserProfile is unmounted.
+
+  Step 2 — Cleanup functions from all useEffect calls run
+    Every useEffect that returned a cleanup function runs its cleanup now.
+    This happens before the component is removed from the DOM.
+
+  Step 3 — Component is removed from the real DOM
+    All DOM nodes for this component are deleted.
+
+--- Function component example ---
+
+  function Timer() {
+    const [seconds, setSeconds] = useState(0);
+
+    useEffect(() => {
+      const interval = setInterval(() => {
+        setSeconds(s => s + 1);
+      }, 1000);
+
+      // cleanup function — returned from useEffect
+      return () => {
+        clearInterval(interval);  // runs when component unmounts
+        console.log("Timer cleaned up");
+      };
+    }, []);
+
+    return <p>Seconds: {seconds}</p>;
+  }
+
+  When this component is removed from the page:
+  → clearInterval(interval) runs automatically
+  → The timer stops — no memory leak
+
+  Without the cleanup:
+  → The interval keeps running in the background even after the component
+    is gone, calling setSeconds on a component that no longer exists.
+    React warns: "Can't perform a React state update on an unmounted component."
+
+--- Class component equivalent ---
+
+  componentWillUnmount() {
+    clearInterval(this.interval);  // runs once when component is removed
+    console.log("Timer cleaned up");
+  }
+
+  componentWillUnmount() is the class equivalent of the cleanup function
+  returned from useEffect.
+
+--------------------------------------------------------------------------------
+5. HOW useEffect COVERS ALL THREE PHASES
+--------------------------------------------------------------------------------
+
+Technical definition:
+  useEffect unifies all three lifecycle phases into a single API. The
+  dependency array controls which phase(s) the callback runs in. The returned
+  cleanup function handles the unmounting (and pre-update cleanup) phase.
+
+Simple way:
+  useEffect is one hook that does the job of three class lifecycle methods.
+  Which phase it covers depends on the dependency array:
+
+  useEffect(() => { ... }, [])
+    → Mounting only — runs once after first render.
+      Equivalent to: componentDidMount
+
+  useEffect(() => { ... }, [value])
+    → Mounting + every update where value changed.
+      Equivalent to: componentDidMount + componentDidUpdate (with check)
+
+  useEffect(() => { ... })
+    → Mounting + every single update without exception.
+      Equivalent to: componentDidMount + componentDidUpdate (always)
+
+  useEffect(() => {
+    return () => { ... };  // cleanup function
+  }, [])
+    → Cleanup runs on unmounting.
+      Equivalent to: componentWillUnmount
+
+  useEffect(() => {
+    // setup
+    return () => { ... };  // cleanup
+  }, [value])
+    → Setup runs on mount and when value changes.
+      Cleanup runs BEFORE next setup AND on unmount.
+      Equivalent to: componentDidMount + componentDidUpdate + componentWillUnmount
+
+--- Full example — all three phases in one component ---
+
+  function ChatRoom({ roomId }) {
+    const [messages, setMessages] = useState([]);
+
+    useEffect(() => {
+      console.log("Mounted or roomId changed — connecting to:", roomId);
+      const socket = connectToRoom(roomId);
+      socket.onMessage(msg => setMessages(prev => [...prev, msg]));
+
+      return () => {
+        console.log("Cleanup — disconnecting from:", roomId);
+        socket.disconnect();
+        // runs when: roomId changes (before reconnecting) OR component unmounts
+      };
+    }, [roomId]);
+
+    return <div>{messages.map(m => <p key={m.id}>{m.text}</p>)}</div>;
+  }
+
+  Lifecycle of this component:
+  → Mount with roomId="general"    : connects to "general"
+  → roomId changes to "sports"     : disconnects from "general", connects to "sports"
+  → roomId changes to "music"      : disconnects from "sports", connects to "music"
+  → Component unmounts             : disconnects from "music"
+
+--------------------------------------------------------------------------------
+6. CLASS LIFECYCLE METHODS — COMPLETE MAP TO HOOKS
+--------------------------------------------------------------------------------
+
+  Class Method               | Hook Equivalent
+  ---------------------------|-----------------------------------------------
+  constructor()              | useState(initialValue) — initialises state
+  render()                   | The function component itself (return JSX)
+  componentDidMount()        | useEffect(() => { ... }, [])
+  componentDidUpdate()       | useEffect(() => { ... }, [deps])
+  componentWillUnmount()     | Cleanup: useEffect(() => { return () => {} }, [])
+  shouldComponentUpdate()    | React.memo (for props) / useMemo (for values)
+  getDerivedStateFromProps() | Compute value from props directly during render
+                             | or useEffect with props as dependencies
+  getSnapshotBeforeUpdate()  | useLayoutEffect — runs before browser paint
+
+  The most important three to know:
+  componentDidMount     ↔  useEffect(() => { ... }, [])
+  componentDidUpdate    ↔  useEffect(() => { ... }, [dependency])
+  componentWillUnmount  ↔  return () => { cleanup } inside useEffect
+
+--------------------------------------------------------------------------------
+7. STRICT MODE DOUBLE-INVOKE (React 18 — Development Only)
+--------------------------------------------------------------------------------
+
+Technical definition:
+  In React 18 Strict Mode (the default in Create React App and Vite dev mode),
+  React intentionally mounts, unmounts, and re-mounts every component TWICE
+  during development. This is done to expose side effects that are not properly
+  cleaned up. It does not happen in production builds.
+
+Simple way:
+  In development, you may notice useEffect running twice even with an empty
+  dependency array. This is React checking that your cleanup function works
+  correctly. If your cleanup function properly undoes your setup, double-running
+  causes no problems. If it does cause problems, your cleanup is missing or wrong.
+
+  Sequence in development (Strict Mode):
+  → Mount → Run effect → Unmount (cleanup) → Re-mount → Run effect again
+
+  Sequence in production:
+  → Mount → Run effect (only once)
+
+  This is not a bug — it is a deliberate check to catch effects that forget
+  to clean up after themselves.
+
+--------------------------------------------------------------------------------
+SUMMARY TABLE
+--------------------------------------------------------------------------------
+
+  Phase       | When It Happens             | useEffect syntax
+  ------------|-----------------------------|---------------------------------
+  Mounting    | Component added to DOM      | useEffect(() => { }, [])
+              | for the first time          | empty array = run once on mount
+  ------------|-----------------------------|---------------------------------
+  Updating    | State or props change,      | useEffect(() => { }, [value])
+              | triggers re-render          | runs when value changes
+  ------------|-----------------------------|---------------------------------
+  Unmounting  | Component removed from DOM  | useEffect(() => {
+              |                             |   return () => { cleanup };
+              |                             | }, [])
+              |                             | returned function = cleanup
+  ------------|-----------------------------|---------------------------------
+  All three   | Mount + updates + unmount   | useEffect(() => {
+              | with cleanup before each    |   // setup
+              | re-run                      |   return () => { cleanup };
+              |                             | }, [deps])
+
+
+  Class method          | Phase          | Hook equivalent
+  ----------------------|----------------|----------------------------------
+  componentDidMount     | After mount    | useEffect(() => {}, [])
+  componentDidUpdate    | After update   | useEffect(() => {}, [dep])
+  componentWillUnmount  | Before unmount | return () => {} inside useEffect
+
+--------------------------------------------------------------------------------
+END OF DOCUMENT
+================================================================================

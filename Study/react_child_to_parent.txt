@@ -1,0 +1,327 @@
+================================================================================
+REACT — SENDING DATA FROM CHILD TO PARENT
+================================================================================
+
+--------------------------------------------------------------------------------
+THINGS YOU SHOULD KNOW FIRST
+--------------------------------------------------------------------------------
+
+--- One-Way Data Flow ---
+
+Technical definition:
+  React enforces a unidirectional data flow — data flows downward from parent
+  to child through props. A child component cannot directly modify its parent's
+  state or push data upward. This is a deliberate design constraint that keeps
+  data flow predictable and easy to trace.
+
+Simple way:
+  In React, data moves in one direction — downward. A parent gives data to
+  a child through props. A child has no built-in way to give data back up to
+  the parent directly. There is no "upward prop." You have to work around this
+  deliberately.
+
+
+--- Callback Function (in this context) ---
+
+Technical definition:
+  A callback function is a function defined in the parent component, passed
+  down to the child as a prop, and called by the child when it has data to
+  send up. When the child calls it, the function executes in the parent's
+  scope — giving the parent access to whatever argument the child passed.
+
+Simple way:
+  The parent writes a function, hands it to the child as a prop, and says
+  "when you have data for me, call this." The child calls it with the data.
+  The parent's function receives it. This is the standard way to send data
+  upward in React.
+
+
+--- Event Handling in React ---
+
+Technical definition:
+  In React, events (onClick, onChange, onSubmit, etc.) are handled by passing
+  a function as a prop to a JSX element. When the event fires, React calls
+  that function and passes a synthetic event object as the argument.
+
+Simple way:
+  When a user types or clicks something, React calls whatever function you
+  attached to that event. You can use that moment to collect the data and
+  send it upward to the parent.
+
+
+--- Lifting State Up ---
+
+Technical definition:
+  Lifting state up is the pattern of moving state from a child component to
+  the nearest common parent when multiple components need to share or react
+  to the same data. The parent owns the state and passes both the value and
+  a way to change it (a callback) down to the children.
+
+Simple way:
+  If a child needs to affect the parent's display or data, you move the state
+  up to the parent. The parent holds the data and gives the child a function
+  to trigger changes. The child does not own the data — it just calls the
+  function.
+
+--------------------------------------------------------------------------------
+1. THE PROBLEM — WHY YOU CANNOT SEND DATA UP DIRECTLY
+--------------------------------------------------------------------------------
+
+Technical definition:
+  Props in React are read-only. A child component receives props from its
+  parent but is not allowed to modify them. There is no built-in "emit" or
+  "dispatch upward" mechanism in React's component model.
+
+Simple way:
+  You cannot do this:
+
+  function Child({ value }) {
+    value = "new data";  // WRONG — you cannot change a prop
+  }
+
+  And there is no built-in "send to parent" function. You need a workaround.
+
+The three real approaches:
+  1. Callback function passed as a prop   ← most common, the standard way
+  2. useRef with forwardRef               ← when parent needs to read/control child
+  3. Context API or state management      ← when many components need shared data
+
+--------------------------------------------------------------------------------
+2. METHOD 1 — CALLBACK FUNCTION (LIFTING STATE UP)
+--------------------------------------------------------------------------------
+
+Technical definition:
+  The parent defines a function that accepts data as a parameter and updates
+  its own state with that data. The function is passed down to the child as a
+  prop. The child calls the function (passing its data as the argument) in
+  response to a user action or any event. Because the function was defined in
+  the parent, calling it updates the parent's state and triggers a re-render
+  of the parent.
+
+Simple way:
+  The parent says: "here is my mailbox function — drop data in it whenever
+  you need to." The child calls that function like any other function, passing
+  the data. The parent's function receives it and does whatever it needs to.
+
+--- Basic Example ---
+
+  function Parent() {
+    const [message, setMessage] = useState("");
+
+    // Step 1: Parent defines the function
+    function handleDataFromChild(data) {
+      setMessage(data);  // receives data from child, updates own state
+    }
+
+    return (
+      <div>
+        <p>Message from child: {message}</p>
+
+        {/* Step 2: Parent passes the function to child as a prop */}
+        <Child onSendData={handleDataFromChild} />
+      </div>
+    );
+  }
+
+  function Child({ onSendData }) {
+    // Step 3: Child calls the function with data when needed
+    return (
+      <button onClick={() => onSendData("Hello from Child!")}>
+        Send to Parent
+      </button>
+    );
+  }
+
+  When the button is clicked:
+  → Child calls onSendData("Hello from Child!")
+  → Parent's handleDataFromChild runs with "Hello from Child!"
+  → Parent's message state updates
+  → Parent re-renders, showing "Message from child: Hello from Child!"
+
+--- Example with Input Field ---
+
+  A more realistic case — child has a text input, parent needs the typed value.
+
+  function Parent() {
+    const [username, setUsername] = useState("");
+
+    return (
+      <div>
+        <p>Typed username: {username}</p>
+        <ChildInput onUsernameChange={setUsername} />
+        {/* passing setUsername directly as the callback */}
+      </div>
+    );
+  }
+
+  function ChildInput({ onUsernameChange }) {
+    return (
+      <input
+        type="text"
+        placeholder="Enter username"
+        onChange={(e) => onUsernameChange(e.target.value)}
+        // every keystroke calls the parent's setter with the new value
+      />
+    );
+  }
+
+--- Example with an Object ---
+
+  Child can send any data type — string, number, object, array.
+
+  function Parent() {
+    const [selectedUser, setSelectedUser] = useState(null);
+
+    return (
+      <div>
+        {selectedUser && <p>Selected: {selectedUser.name}</p>}
+        <UserList onSelectUser={setSelectedUser} />
+      </div>
+    );
+  }
+
+  function UserList({ onSelectUser }) {
+    const users = [
+      { id: 1, name: "Aman" },
+      { id: 2, name: "Sara" }
+    ];
+
+    return (
+      <ul>
+        {users.map(user => (
+          <li key={user.id} onClick={() => onSelectUser(user)}>
+            {user.name}
+          </li>
+          // sends the whole user object up to the parent on click
+        ))}
+      </ul>
+    );
+  }
+
+When to use:
+  This is the correct method for almost all cases. Use it whenever a child
+  needs to report user actions, form input, or selection results back to
+  the parent.
+
+--------------------------------------------------------------------------------
+3. METHOD 2 — useRef WITH forwardRef
+--------------------------------------------------------------------------------
+
+Technical definition:
+  forwardRef is a React function that allows a parent to pass a ref down to
+  a child component. The child attaches the ref to one of its DOM elements or
+  exposes a custom API using useImperativeHandle. The parent can then read
+  data directly from the ref or call methods on the child without needing the
+  child to push data via a callback.
+
+Simple way:
+  Instead of the child pushing data up when something happens, the parent
+  reaches into the child and reads or calls something directly through the ref.
+  The parent pulls the data when it needs it, rather than the child sending it.
+
+  This is the reverse direction of communication — instead of "child calls
+  parent's function," it is "parent reads from child's ref."
+
+When is this used:
+  - Reading the current value of an uncontrolled input at form submit time
+  - Triggering a method on a child (like focus, scroll, reset)
+  - When you do not need real-time data on every keystroke, only on demand
+
+Example — parent reads child's input value on submit:
+
+  const ChildInput = React.forwardRef((props, ref) => {
+    return <input ref={ref} type="text" placeholder="Type here" />;
+  });
+
+  function Parent() {
+    const inputRef = useRef(null);
+
+    function handleSubmit() {
+      const value = inputRef.current.value;  // parent reads child's input
+      console.log("Value from child:", value);
+    }
+
+    return (
+      <div>
+        <ChildInput ref={inputRef} />
+        <button onClick={handleSubmit}>Submit</button>
+      </div>
+    );
+  }
+
+  The child does not call any function. The parent reads the data when it
+  decides to (on button click), not on every keystroke.
+
+Difference from Method 1:
+  Method 1 — child pushes data to parent continuously (on every change).
+  Method 2 — parent pulls data from child on demand (only when needed).
+
+When NOT to use:
+  Do not use this as a replacement for Method 1 in general cases. Using refs
+  to read form values on every change is the uncontrolled component pattern
+  and makes validation harder. Use Method 1 (callback) when you need real-time
+  awareness of the child's data.
+
+--------------------------------------------------------------------------------
+4. METHOD 3 — CONTEXT API OR STATE MANAGEMENT
+--------------------------------------------------------------------------------
+
+Technical definition:
+  The Context API and external state management libraries (Redux, Zustand)
+  do not implement a direct child-to-parent communication. Instead, they
+  provide a shared state store that both parent and child can read from and
+  write to independently. A child writes to the shared store; the parent
+  reads from it. Neither depends directly on the other.
+
+Simple way:
+  Instead of the child sending data to the parent, both the child and the
+  parent talk to a shared noticeboard (context or store). The child puts
+  data on the noticeboard. The parent reads from the noticeboard. They are
+  not directly connected — both just use the same shared source.
+
+When to use this instead of Method 1:
+  - When many components need the same data, not just one parent
+  - When the components are far apart in the tree and prop drilling becomes
+    messy
+  - When the data is truly global (user session, theme, cart contents)
+
+When NOT to use this:
+  If only a parent and its direct child need to share data, using Context
+  or Redux just for that is unnecessary overhead. Method 1 (callback) is
+  simpler and cleaner for local parent-child communication.
+
+--------------------------------------------------------------------------------
+5. SUMMARY — WHICH METHOD TO USE WHEN
+--------------------------------------------------------------------------------
+
+  Situation                                        | Best Method
+  -------------------------------------------------|---------------------------
+  Child has input/selection to report to parent    | Callback function (M1)
+  Child form reports data on submit                | Callback function (M1)
+  Parent needs child's value only on demand        | useRef + forwardRef (M2)
+  Parent needs to trigger a method on child        | useRef + forwardRef (M2)
+  Many components need the same shared data        | Context API (M3)
+  Complex global state across many features        | Redux / Zustand (M3)
+
+
+--- One-Line Summary of Each Method ---
+
+  Callback Function:
+    Parent gives child a function → child calls it with data → parent receives.
+
+  useRef + forwardRef:
+    Parent attaches a ref to child → parent reads or calls child directly.
+
+  Context / State Management:
+    Both read and write to a shared store — no direct connection needed.
+
+
+--- The Most Important Rule ---
+
+  React's default communication direction is always parent → child via props.
+  Sending data child → parent always requires a deliberate pattern.
+  Method 1 (callback) is the right choice in almost all standard cases.
+
+--------------------------------------------------------------------------------
+END OF DOCUMENT
+================================================================================

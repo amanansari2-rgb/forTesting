@@ -1,0 +1,907 @@
+================================================================================
+  CLINICFLOW — HOW AUTHENTICATION & MFA IS WRITTEN IN THE BACKEND
+  A code-by-code walkthrough of every file involved
+================================================================================
+
+This document explains what code was written to make authentication and MFA
+work — starting from installing the packages and ending at how every protected
+endpoint knows who is calling it.
+
+Files covered in order:
+  1. ClinicFlow-Backend.csproj         — package installation
+  2. appsettings.json                  — JWT and MFA configuration
+  3. Program.cs                        — registering auth with the app
+  4. Model/User.cs                     — auth-related database columns
+  5. DTO/                              — request and response shapes
+  6. Services/Interface/IAuthService.cs — the contract
+  7. Services/Implementation/AuthService.cs — all the actual logic
+  8. Controllers/AuthController.cs     — the API endpoints
+  9. Services/Implementation/CurrentUserService.cs — reading the logged-in user
+
+
+================================================================================
+STEP 1 — INSTALL THE PACKAGES (ClinicFlow-Backend.csproj)
+================================================================================
+
+The first thing that had to be done was adding the NuGet packages.
+In the .csproj file, these lines were added inside the <ItemGroup>:
+
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.25" />
+    <PackageReference Include="Otp.NET" Version="1.4.0" />
+    <PackageReference Include="MailKit" Version="4.12.0" />
+
+After adding them, running "dotnet restore" downloads them.
+
+  BCrypt.Net-Next
+    Used to hash passwords before saving and to verify passwords on login.
+    You never store the raw password — you store the hash.
+
+  Microsoft.AspNetCore.Authentication.JwtBearer
+    Gives ASP.NET Core the ability to read a JWT token from the
+    Authorization header on every incoming request and validate it.
+
+  Otp.NET
+    Handles TOTP — generating the shared secret and verifying the 6-digit
+    codes from Google Authenticator.
+
+  MailKit
+    Sends emails for password reset links and welcome messages.
+
+
+================================================================================
+STEP 2 — CONFIGURATION (appsettings.json)
+================================================================================
+
+Before writing any auth code, the settings that auth code needs were added
+to appsettings.json:
+
+    "Jwt": {
+      "Secret":                  "your-very-long-secret-key-min-32-chars-replace-this",
+      "Issuer":                  "clinicflow-api",
+      "Audience":                "clinicflow-client",
+      "AccessTokenExpiryMinutes": 60,
+      "RefreshTokenDays":         7,
+      "MfaChallengeMinutes":      5
+    },
+    "Mfa": {
+      "Issuer":                  "ClinicFlow",
+      "TotpStepSeconds":          30,
+      "TotpVerificationWindow":   1
+    }
+
+What each value does:
+
+  Jwt:Secret
+    The private key used to sign every JWT token. If this is changed,
+    all existing tokens become invalid. Must be at least 32 characters.
+    In production, this must NEVER be in the file — use environment variables.
+
+  Jwt:Issuer
+    A string that identifies who issued the token ("clinicflow-api").
+    The JWT middleware checks that every incoming token has this issuer.
+
+  Jwt:Audience
+    Who the token is intended for ("clinicflow-client").
+    The JWT middleware checks that every incoming token has this audience.
+
+  Jwt:AccessTokenExpiryMinutes
+    How long a token is valid — 60 means the user must log in again
+    after 60 minutes.
+
+  Jwt:MfaChallengeMinutes
+    After the first login step (password), the challenge token issued
+    expires in 5 minutes. The user must complete MFA within that time.
+
+  Mfa:Issuer
+    The name shown inside Google Authenticator after scanning the QR code.
+
+  Mfa:TotpVerificationWindow
+    How many 30-second windows either side of "now" are accepted.
+    1 means the code is valid for ±30 seconds to handle clock drift.
+
+
+================================================================================
+STEP 3 — REGISTER AUTH IN THE APP (Program.cs)
+================================================================================
+
+After the packages are installed and appsettings is configured, the app needs
+to be told to USE authentication. This happens in Program.cs.
+
+Two things were added:
+
+────────────────────────────────────────
+3a. Registering the JWT service (builder section)
+────────────────────────────────────────
+
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer           = true,
+                ValidateAudience         = true,
+                ValidateLifetime         = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer              = builder.Configuration["Jwt:Issuer"],
+                ValidAudience            = builder.Configuration["Jwt:Audience"],
+                IssuerSigningKey         = new SymmetricSecurityKey(
+                    Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"]!)),
+                ClockSkew = TimeSpan.Zero
+            };
+
+            options.Events = new JwtBearerEvents
+            {
+                OnChallenge = context =>
+                {
+                    // Override the default 401 response to return clean JSON
+                    context.HandleResponse();
+                    context.Response.StatusCode  = 401;
+                    context.Response.ContentType = "application/json";
+                    var message = context.AuthenticateFailure?.Message
+                        .Contains("Lifetime") == true
+                        ? "Token has expired. Please login again."
+                        : "Unauthorized. Please login.";
+                    return context.Response.WriteAsync(
+                        System.Text.Json.JsonSerializer.Serialize(new { message }));
+                }
+            };
+        });
+
+    builder.Services.AddAuthorization();
+
+  What AddAuthentication does:
+    It registers the JWT Bearer authentication scheme with the DI container.
+    This means ASP.NET knows: "when a request comes in, look for a Bearer
+    token in the Authorization header and validate it using these rules."
+
+  What the TokenValidationParameters does:
+    ValidateIssuerSigningKey = true  — the token's signature must match our secret
+    ValidateIssuer = true            — the token must say it came from "clinicflow-api"
+    ValidateAudience = true          — the token must be for "clinicflow-client"
+    ValidateLifetime = true          — the token must not be expired
+    ClockSkew = TimeSpan.Zero        — no grace period — expired means expired
+
+  What OnChallenge does:
+    By default, ASP.NET returns an empty 401 response. OnChallenge overrides
+    this to return a JSON body with a readable message so the frontend knows
+    whether the token is missing or expired.
+
+────────────────────────────────────────
+3b. Using auth in the middleware pipeline (app section)
+────────────────────────────────────────
+
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+  These two lines go in the pipeline AFTER UseCors and BEFORE MapControllers.
+  Order matters — authentication must run before authorization.
+
+  UseAuthentication()
+    For every incoming request, this reads the Authorization: Bearer <token>
+    header, validates the JWT using the rules from Step 3a, and if valid,
+    populates HttpContext.User with the claims from the token (UserId, Role,
+    Name, Email).
+
+  UseAuthorization()
+    After the user is identified, this checks if they are allowed to call
+    the endpoint based on the [Authorize] attribute on the controller or method.
+
+  Also added — IHttpContextAccessor so services can read the current user:
+
+    builder.Services.AddHttpContextAccessor();
+
+  And registered the auth-related services:
+
+    builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+    builder.Services.AddScoped<IAuthService,        AuthService>();
+
+
+================================================================================
+STEP 4 — THE USER MODEL (Model/User.cs)
+================================================================================
+
+The User model defines the columns in the database that authentication needs.
+These fields were added to the User class:
+
+    // Basic auth fields
+    public string Email        { get; set; }   // used as username
+    public string PasswordHash { get; set; }   // BCrypt hash — never plain text
+    public string Role         { get; set; }   // Admin / Clinician / Patient / etc.
+    public string Status       { get; set; }   // Active or Inactive
+
+    // Password reset
+    public string?   PasswordResetToken        { get; set; }
+    public DateTime? PasswordResetTokenExpiry  { get; set; }
+
+    // MFA fields (added in migration 20260511041945_AddUserTotpMfa)
+    public string?   TotpSecret                { get; set; }  // Base32 secret
+    public bool      IsMfaEnabled              { get; set; }  // is MFA on?
+    public string?   MfaChallengeToken         { get; set; }  // temp token during login
+    public DateTime? MfaChallengeTokenExpiry   { get; set; }  // expires in 5 min
+
+The MFA columns did not exist from day one. They were added later by running:
+
+    dotnet ef migrations add AddUserTotpMfa
+    dotnet ef database update
+
+The migration file (20260511041945_AddUserTotpMfa.cs) added the four MFA
+columns to the existing Users table without touching other data.
+
+
+================================================================================
+STEP 5 — DATA TRANSFER OBJECTS (DTO folder)
+================================================================================
+
+
+
+================================================================================
+STEP 6 — THE INTERFACE (Services/Interface/IAuthService.cs)
+================================================================================
+
+The interface defines what AuthService must implement.
+This is the contract:
+
+    public interface IAuthService
+    {
+        Task<LoginResponseDto>    RegisterAsync(RegisterRequestDto dto);
+        Task<LoginResponseDto>    LoginAsync(LoginRequestDto dto);
+        Task                      LogoutAsync();
+        Task                      ForgotPasswordAsync(string email);
+        Task                      ResetPasswordAsync(string token, string newPassword);
+        Task<MfaSetupResponseDto> SetupMfaAsync(Guid userId);
+        Task                      EnableMfaAsync(Guid userId, string code);
+        Task<LoginResponseDto>    VerifyMfaAsync(string challengeToken, string code);
+        Task                      DisableMfaAsync(Guid userId, string code);
+    }
+
+Controllers and tests depend on this interface, not on the concrete class.
+This is standard .NET dependency injection pattern.
+
+
+================================================================================
+STEP 7 — THE AUTH SERVICE (Services/Implementation/AuthService.cs)
+================================================================================
+
+This is where all the logic lives. The constructor takes its dependencies
+through DI:
+
+    public AuthService(
+        AppDbContext         context,   // database
+        IConfiguration       config,    // reads appsettings.json
+        IAuditService        audit,     // writes audit log rows
+        IEmailService        email,     // sends emails
+        ILogger<AuthService> logger)    // writes to Serilog
+
+────────────────────────────────────────
+7a. RegisterAsync — Creating a new account
+────────────────────────────────────────
+
+    public async Task<LoginResponseDto> RegisterAsync(RegisterRequestDto dto)
+    {
+        // 1. Check email is not already taken
+        var emailExists = await _context.Users.AnyAsync(u => u.Email == dto.Email);
+        if (emailExists)
+            throw new BusinessRuleException("DUPLICATE_EMAIL", "An account with this email already exists.");
+
+        // 2. Begin a database transaction
+        //    Both User and Patient rows must succeed or both roll back
+        await using var tx = await _context.Database.BeginTransactionAsync();
+
+        // 3. Create the User row — hash the password with BCrypt
+        var user = new User
+        {
+            Name         = dto.Name.Trim(),
+            Email        = dto.Email.Trim().ToLower(),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),  // <<< NEVER plain text
+            Role         = "Patient",
+            Status       = "Active",
+        };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        // 4. Generate a unique MRN (CF-20260531-ABCD)
+        string mrn;
+        do { mrn = GenerateMRN(); }
+        while (await _context.Patients.AnyAsync(p => p.MRN == mrn));  // retry if collision
+
+        // 5. Create the Patient row linked to the User
+        var patient = new Patient { UserID = user.UserID, MRN = mrn, ... };
+        _context.Patients.Add(patient);
+        await _context.SaveChangesAsync();
+
+        // 6. Write audit log: "user X registered"
+        await _audit.LogAsAsync(user.UserID, "REGISTER", "Patient", patient.PatientID.ToString(), ...);
+
+        // 7. Commit both rows together
+        await tx.CommitAsync();
+
+        // 8. Send welcome email (non-fatal — if this fails, registration still worked)
+        try { await _email.SendWelcomeEmailAsync(user.Email, user.Name); }
+        catch (Exception ex) { _logger.LogError(ex, "Failed to send welcome email"); }
+
+        // 9. Auto-login — generate and return a JWT immediately
+        return new LoginResponseDto
+        {
+            AccessToken = GenerateJwt(user),
+            Role        = user.Role,
+            Name        = user.Name
+        };
+    }
+
+  Key points:
+    - BCrypt.HashPassword hashes the password with a random salt. The hash
+      is something like: "$2a$11$rQ8vZ9...". The original password cannot
+      be recovered from this.
+    - The transaction means: if creating the Patient row fails after the
+      User row is saved, the User row is also rolled back. No half-created
+      accounts.
+    - GenerateJwt is called at the end so the user is logged in immediately.
+
+────────────────────────────────────────
+7b. LoginAsync — Verifying credentials
+────────────────────────────────────────
+
+    public async Task<LoginResponseDto> LoginAsync(LoginRequestDto dto)
+    {
+        // 1. Find the user by email (only Active users)
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.Email == dto.Email && u.Status == "Active");
+
+        // 2. Verify password with BCrypt
+        bool passwordValid;
+        try { passwordValid = user != null && BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash); }
+        catch { passwordValid = false; }
+
+        // 3. Generic error — same message whether email or password is wrong
+        //    (prevents attackers from knowing which is wrong)
+        if (user == null || !passwordValid)
+            throw new UnauthorizedAccessException("Invalid credentials.");
+
+        // 4. If MFA is enabled — do NOT give the JWT yet
+        if (user.IsMfaEnabled)
+        {
+            user.MfaChallengeToken       = Guid.NewGuid().ToString("N");  // random token
+            user.MfaChallengeTokenExpiry = DateTime.UtcNow.AddMinutes(5); // expires in 5 min
+            await _context.SaveChangesAsync();
+
+            // Tell the frontend: "show the code input screen"
+            return new LoginResponseDto
+            {
+                RequiresMfa       = true,
+                MfaChallengeToken = user.MfaChallengeToken
+            };
+        }
+
+        // 5. No MFA — write audit log and return the JWT
+        await _audit.LogAsAsync(user.UserID, "LOGIN", "User", user.UserID.ToString());
+
+        return new LoginResponseDto
+        {
+            AccessToken = GenerateJwt(user),
+            Role        = user.Role,
+            Name        = user.Name
+        };
+    }
+
+  Key points:
+    - BCrypt.Verify takes the plain password and the stored hash and returns
+      true/false. It does NOT re-hash — it verifies using BCrypt's algorithm.
+    - The MfaChallengeToken is a random GUID saved to the database. It is the
+      "bridge" between step 1 (password) and step 2 (TOTP code). Without this
+      token, the frontend has no way to link the two steps together.
+
+────────────────────────────────────────
+7c. GenerateJwt — Creating the JWT token
+────────────────────────────────────────
+
+    private string GenerateJwt(User user)
+    {
+        // Read config values
+        var secret   = _config["Jwt:Secret"];
+        var issuer   = _config["Jwt:Issuer"];
+        var audience = _config["Jwt:Audience"];
+
+        // Create the signing key from the secret string
+        var key   = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        // Define what goes INSIDE the token (claims)
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, user.UserID.ToString()),  // user's GUID
+            new Claim(ClaimTypes.Email,          user.Email),
+            new Claim(ClaimTypes.Role,           user.Role),
+            new Claim(ClaimTypes.Name,           user.Name)
+        };
+
+        // Build the token
+        var token = new JwtSecurityToken(
+            issuer:             issuer,
+            audience:           audience,
+            claims:             claims,
+            expires:            DateTime.UtcNow.AddMinutes(60),
+            signingCredentials: creds
+        );
+
+        // Serialize to string: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+  What this produces:
+    A JWT string with three dot-separated sections:
+      - Header:    base64({"alg":"HS256","typ":"JWT"})
+      - Payload:   base64({"sub":"<userId>","email":"...","role":"...","exp":...})
+      - Signature: HMAC-SHA256(header + "." + payload, secret)
+
+  The signature is the security. If anyone tampers with the payload (e.g.
+  tries to change Role from "Patient" to "Admin"), the signature won't match
+  and the token is rejected by UseAuthentication().
+
+────────────────────────────────────────
+7d. SetupMfaAsync — Generating the TOTP secret
+────────────────────────────────────────
+
+    public async Task<MfaSetupResponseDto> SetupMfaAsync(Guid userId)
+    {
+        var user = await _context.Users.FindAsync(userId);
+
+        // 1. Generate 20 random bytes — this is the TOTP secret
+        var secretBytes  = KeyGeneration.GenerateRandomKey(20);
+
+        // 2. Encode as Base32 — this is the format all authenticator apps expect
+        var base32Secret = Base32Encoding.ToString(secretBytes);
+
+        // 3. Save the secret to the user record (IsMfaEnabled is still false)
+        user.TotpSecret = base32Secret;
+        await _context.SaveChangesAsync();
+
+        // 4. Build the otpauth:// URI — this is what gets turned into a QR code
+        var issuer = _config["Mfa:Issuer"] ?? "ClinicFlow";
+        var qrUri  = $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(user.Email)}"
+                   + $"?secret={base32Secret}&issuer={Uri.EscapeDataString(issuer)}&algorithm=SHA1&digits=6&period=30";
+
+        return new MfaSetupResponseDto
+        {
+            QrCodeUri      = qrUri,
+            ManualEntryKey = base32Secret   // user types this manually if they can't scan
+        };
+    }
+
+  The otpauth:// URI format is a standard. Google Authenticator, Microsoft
+  Authenticator, and Authy all read it. When the frontend renders it as a
+  QR code and the user scans it, the app stores the secret and starts
+  generating 6-digit codes every 30 seconds.
+
+  At this point IsMfaEnabled is still false. The user has the secret in
+  their authenticator app but MFA is not active yet. They must call
+  EnableMfaAsync to confirm it worked.
+
+────────────────────────────────────────
+7e. EnableMfaAsync — Activating MFA after setup
+────────────────────────────────────────
+
+    public async Task EnableMfaAsync(Guid userId, string code)
+    {
+        var user = await _context.Users.FindAsync(userId);
+
+        // Can't enable if setup was never called
+        if (string.IsNullOrEmpty(user.TotpSecret))
+            throw new BusinessRuleException("MFA_NOT_INITIATED", "Call /mfa/setup first.");
+
+        // Verify the code against the stored secret
+        if (!VerifyTotp(user.TotpSecret, code))
+            throw new UnauthorizedAccessException("Invalid TOTP code.");
+
+        // Mark MFA as enabled
+        user.IsMfaEnabled = true;
+        await _context.SaveChangesAsync();
+
+        await _audit.LogAsAsync(user.UserID, "MFA_ENABLED", "User", user.UserID.ToString());
+    }
+
+  This step exists to prevent enabling MFA with a wrongly scanned QR code.
+  The user must prove the app is generating the right codes before MFA
+  is turned on for their account.
+
+────────────────────────────────────────
+7f. VerifyMfaAsync — Step 2 of MFA login
+────────────────────────────────────────
+
+    public async Task<LoginResponseDto> VerifyMfaAsync(string challengeToken, string code)
+    {
+        // 1. Find the user who has this challenge token AND it hasn't expired
+        var user = await _context.Users.FirstOrDefaultAsync(u =>
+            u.MfaChallengeToken       == challengeToken &&
+            u.MfaChallengeTokenExpiry >  DateTime.UtcNow &&
+            u.Status                  == "Active");
+
+        if (user == null)
+            throw new UnauthorizedAccessException("Invalid or expired challenge token.");
+
+        // 2. Verify the 6-digit TOTP code
+        if (!VerifyTotp(user.TotpSecret, code))
+            throw new UnauthorizedAccessException("Invalid TOTP code.");
+
+        // 3. Clear the challenge token — it cannot be used again
+        user.MfaChallengeToken       = null;
+        user.MfaChallengeTokenExpiry = null;
+        await _context.SaveChangesAsync();
+
+        // 4. Write audit and return the full JWT
+        await _audit.LogAsAsync(user.UserID, "LOGIN", "User", user.UserID.ToString());
+
+        return new LoginResponseDto
+        {
+            AccessToken = GenerateJwt(user),
+            Role        = user.Role,
+            Name        = user.Name
+        };
+    }
+
+  This is the completion of the two-step login. The challenge token (saved
+  to the database in LoginAsync) ties the two requests together. Once
+  verified, it is cleared so it cannot be replayed.
+
+────────────────────────────────────────
+7g. VerifyTotp — The TOTP helper
+────────────────────────────────────────
+
+    private bool VerifyTotp(string base32Secret, string code)
+    {
+        try
+        {
+            // Convert Base32 string back to bytes
+            var secretBytes = Base32Encoding.ToBytes(base32Secret);
+
+            // Create a TOTP instance with those bytes
+            var totp = new Totp(secretBytes);
+
+            // Read the allowed window from config (default 1 = ±30 seconds)
+            var window = int.TryParse(_config["Mfa:TotpVerificationWindow"], out var w) && w >= 0 ? w : 1;
+
+            // Verify the code
+            return totp.VerifyTotp(code, out _, new VerificationWindow(window, window));
+        }
+        catch { return false; }  // any exception = invalid
+    }
+
+  What VerifyTotp does internally (from OtpNet library):
+    1. Takes the current UTC time, divides by 30 to get the "time step"
+    2. Runs HMAC-SHA1(secretBytes, timeStep)
+    3. Extracts 6 digits from that hash
+    4. Compares to the code the user entered
+    5. Also checks 1 step before and 1 step after (the window) to handle
+       clock differences between the phone and the server
+
+────────────────────────────────────────
+7h. ForgotPasswordAsync and ResetPasswordAsync
+────────────────────────────────────────
+
+    // ForgotPasswordAsync
+    public async Task ForgotPasswordAsync(string email)
+    {
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        if (user is null) return;  // silent — don't reveal if email exists
+
+        user.PasswordResetToken       = Guid.NewGuid().ToString("N");  // random token
+        user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);   // 1 hour to use it
+        await _context.SaveChangesAsync();
+
+        await _email.SendPasswordResetEmailAsync(user.Email, user.Name, user.PasswordResetToken);
+    }
+
+    // ResetPasswordAsync
+    public async Task ResetPasswordAsync(string token, string newPassword)
+    {
+        // Find user by token AND check it hasn't expired
+        var user = await _context.Users.FirstOrDefaultAsync(u =>
+            u.PasswordResetToken == token &&
+            u.PasswordResetTokenExpiry > DateTime.UtcNow);
+
+        if (user is null)
+            throw new BusinessRuleException("INVALID_TOKEN", "Invalid or expired token.");
+
+        // Hash the new password and save
+        user.PasswordHash             = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.PasswordResetToken       = null;   // single use — clear it
+        user.PasswordResetTokenExpiry = null;
+        await _context.SaveChangesAsync();
+
+        await _audit.LogAsAsync(user.UserID, "RESET_PASSWORD", "User", user.UserID.ToString());
+    }
+
+
+================================================================================
+STEP 8 — THE CONTROLLER (Controllers/AuthController.cs)
+================================================================================
+
+The controller exposes the HTTP endpoints. It does NOT contain business logic —
+it validates the incoming request and calls the service.
+
+The controller is declared like this:
+
+    [ApiController]
+    [Route("api/[controller]")]   // base URL = /api/auth
+    public class AuthController : ControllerBase
+    {
+        private readonly IAuthService _authService;
+
+        public AuthController(IAuthService authService)
+        {
+            _authService = authService;  // injected by DI
+        }
+    }
+
+────────────────────────────────────────
+8a. Public endpoints — [AllowAnonymous]
+────────────────────────────────────────
+
+These endpoints do NOT require a JWT. They are the entry points for users
+who are not logged in yet:
+
+    [HttpPost("register")]
+    [AllowAnonymous]              // <<< no JWT required
+    public async Task<IActionResult> Register([FromBody] RegisterRequestDto? dto)
+    {
+        // validate input...
+        var result = await _authService.RegisterAsync(dto);
+        return CreatedAtAction(nameof(Register), result);
+    }
+
+    [HttpPost("login")]
+    [AllowAnonymous]              // <<< no JWT required
+    public async Task<IActionResult> Login([FromBody] LoginRequestDto? dto)
+    {
+        // validate input...
+        var result = await _authService.LoginAsync(dto);
+        return Ok(result);
+    }
+
+    [HttpPost("forgot-password")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto? dto)
+    {
+        await _authService.ForgotPasswordAsync(dto.Email);
+        return Ok(new { message = "If an account exists a reset link has been sent." });
+    }
+
+    [HttpPost("reset-password")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto? dto)
+    {
+        await _authService.ResetPasswordAsync(dto.Token, dto.NewPassword);
+        return Ok(new { message = "Password has been reset successfully." });
+    }
+
+    [HttpPost("mfa/verify")]      // no [Authorize] — user has no JWT yet
+    public async Task<IActionResult> MfaVerify([FromBody] MfaVerifyDto? dto)
+    {
+        var result = await _authService.VerifyMfaAsync(dto.ChallengeToken, dto.Code);
+        return Ok(result);
+    }
+
+────────────────────────────────────────
+8b. Protected endpoints — [Authorize]
+────────────────────────────────────────
+
+These require a valid JWT in the Authorization header:
+
+    [HttpPost("logout")]
+    [Authorize]                   // <<< JWT required
+    public async Task<IActionResult> Logout()
+    {
+        await _authService.LogoutAsync();
+        return NoContent();
+    }
+
+    [HttpGet("me")]
+    [Authorize]                   // <<< JWT required
+    public IActionResult Me()
+    {
+        // Read claims directly from the token — no database call needed
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var email  = User.FindFirst(ClaimTypes.Email)?.Value;
+        var role   = User.FindFirst(ClaimTypes.Role)?.Value;
+        var name   = User.FindFirst(ClaimTypes.Name)?.Value;
+        return Ok(new { userId, email, role, name });
+    }
+
+    [HttpPost("mfa/setup")]
+    [Authorize]                   // <<< JWT required — must be logged in to set up MFA
+    public async Task<IActionResult> MfaSetup()
+    {
+        if (!Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+            return Unauthorized(new { message = "Token is invalid." });
+
+        var result = await _authService.SetupMfaAsync(userId);
+        return Ok(result);
+    }
+
+    [HttpPost("mfa/enable")]
+    [Authorize]
+    public async Task<IActionResult> MfaEnable([FromBody] MfaEnableDto? dto)
+    {
+        // validate 6-digit format...
+        if (!Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+            return Unauthorized();
+
+        await _authService.EnableMfaAsync(userId, dto.Code.Trim());
+        return Ok(new { message = "MFA has been enabled." });
+    }
+
+    [HttpPost("mfa/disable")]
+    [Authorize]
+    public async Task<IActionResult> MfaDisable([FromBody] MfaDisableDto? dto)
+    {
+        // validate 6-digit format...
+        if (!Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+            return Unauthorized();
+
+        await _authService.DisableMfaAsync(userId, dto.Code.Trim());
+        return Ok(new { message = "MFA has been disabled." });
+    }
+
+  How [Authorize] works:
+    When a request hits a method with [Authorize], the UseAuthentication()
+    middleware has already run and either populated HttpContext.User (if the
+    JWT was valid) or left it empty (if not).
+
+    UseAuthorization() then checks: if the endpoint requires [Authorize]
+    and HttpContext.User is not authenticated, reject with 401.
+
+    If the endpoint requires [Authorize(Roles = "Admin")], it also checks
+    that the Role claim in the token matches.
+
+  How User.FindFirst(...) works:
+    Inside a controller, "User" is a property of ControllerBase. It points
+    to HttpContext.User, which was populated by UseAuthentication() with
+    the decoded JWT claims. No database query — it reads directly from the
+    token that is already in memory.
+
+
+================================================================================
+STEP 9 — READING THE CURRENT USER IN SERVICES (CurrentUserService.cs)
+================================================================================
+
+Controllers can read User.FindFirst() directly, but services cannot access
+HttpContext directly. That is what CurrentUserService is for.
+
+It is injected into any service that needs to know who the caller is:
+
+    public class CurrentUserService : ICurrentUserService
+    {
+        private readonly IHttpContextAccessor _httpContext;
+        private readonly AppDbContext         _db;
+
+        // Get the logged-in user's ID from the JWT
+        public Guid UserId
+        {
+            get
+            {
+                var idClaim = _httpContext.HttpContext?
+                    .User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                return Guid.TryParse(idClaim, out var id) ? id : Guid.Empty;
+            }
+        }
+
+        // Get the role from the JWT
+        public string? Role =>
+            _httpContext.HttpContext?.User?.FindFirst(ClaimTypes.Role)?.Value;
+
+        public bool IsPatient =>
+            string.Equals(Role, "Patient", StringComparison.Ordinal);
+
+        // Patients can only access their own records — enforce this here
+        public async Task EnsureSelfOrPrivilegedAsync(Guid targetPatientId)
+        {
+            if (!IsPatient) return;  // non-patients pass straight through
+
+            var ownPatientId = await GetPatientIdAsync();
+            if (ownPatientId is null || ownPatientId.Value != targetPatientId)
+                throw new UnauthorizedAccessException("Patients can only access their own records.");
+        }
+    }
+
+  This service is registered in Program.cs:
+    builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+
+  Then injected anywhere it is needed:
+    public class PatientService
+    {
+        private readonly ICurrentUserService _currentUser;
+
+        public PatientService(ICurrentUserService currentUser, ...)
+        {
+            _currentUser = currentUser;
+        }
+
+        public async Task<Patient> GetPatientAsync(Guid patientId)
+        {
+            // If the caller is a Patient, they can only get their own record
+            await _currentUser.EnsureSelfOrPrivilegedAsync(patientId);
+            // ... fetch and return the patient
+        }
+    }
+
+
+================================================================================
+HOW [AUTHORIZE] WORKS ON OTHER CONTROLLERS
+================================================================================
+
+Every other controller in the project (AuditController, PatientsController,
+SchedulingController, etc.) uses [Authorize] to protect its endpoints.
+
+Examples from the codebase:
+
+    // Only Admin and Auditor can see audit logs
+    [Authorize(Roles = "Admin,Auditor")]
+    public class AuditController : ControllerBase { ... }
+
+    // Any logged-in user can see notifications (but they only see their own)
+    [Authorize]
+    public class NotificationController : ControllerBase { ... }
+
+    // Only Clinician and Admin can access encounters
+    [Authorize(Roles = "Clinician,Admin")]
+    public IActionResult GetEncounter(Guid id) { ... }
+
+When a request comes in:
+  1. UseAuthentication() reads the JWT from "Authorization: Bearer <token>"
+  2. It validates the token using the TokenValidationParameters from Step 3a
+  3. If valid, it sets HttpContext.User with the claims from the token
+  4. UseAuthorization() checks the [Authorize] attribute
+  5. If the Role claim matches, the request continues to the controller method
+  6. If not, the request is rejected with 403 Forbidden
+
+
+================================================================================
+FULL CALL CHAIN SUMMARY
+================================================================================
+
+POST /api/auth/login
+  AuthController.Login()
+    → validates request format
+    → calls AuthService.LoginAsync()
+      → queries DB for user by email
+      → BCrypt.Verify() checks password
+      → if IsMfaEnabled:
+            saves MfaChallengeToken to DB
+            returns { RequiresMfa: true, MfaChallengeToken: "..." }
+      → if not MFA:
+            calls AuditService.LogAsAsync("LOGIN", ...)
+            calls GenerateJwt()
+              → builds claims array
+              → signs with HMAC-SHA256 + Jwt:Secret
+              → returns "eyJhbGci..." string
+            returns { AccessToken: "...", Role: "...", Name: "..." }
+
+POST /api/auth/mfa/verify  (only if MFA was required)
+  AuthController.MfaVerify()
+    → validates request format
+    → calls AuthService.VerifyMfaAsync(challengeToken, code)
+      → queries DB for user with matching challenge token (not expired)
+      → OtpNet.Totp.VerifyTotp() checks the 6-digit code
+      → clears challenge token from DB
+      → calls AuditService.LogAsAsync("LOGIN", ...)
+      → calls GenerateJwt()
+      → returns { AccessToken: "...", Role: "...", Name: "..." }
+
+Every subsequent request
+  Authorization: Bearer eyJhbGci...
+  → UseAuthentication() middleware
+    → JwtBearerHandler reads the token
+    → validates signature, issuer, audience, expiry
+    → populates HttpContext.User with UserId, Email, Role, Name
+  → UseAuthorization() middleware
+    → checks [Authorize] or [Authorize(Roles="...")] on the endpoint
+    → passes or rejects with 401/403
+  → Controller method runs
+    → can call User.FindFirst(ClaimTypes.Role) to read the role
+    → can inject ICurrentUserService to read UserId from any service
+
+
+================================================================================
+  END OF DOCUMENT
+  ClinicFlow Healthcare System | Confidential | 2026
+================================================================================

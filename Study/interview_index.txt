@@ -1,0 +1,318 @@
+================================================================================
+INTERVIEW PREPARATION INDEX — WHAT I KNOW vs WHAT I NEED TO LEARN
+================================================================================
+
+  [✓ KNOW]   = covered, documented, understood
+  [→ LEARN]  = not yet covered — study before interview
+  [~ REVIEW] = covered but needs deeper understanding
+
+Legend note:
+  Topics go from basic → advanced within each section.
+  Interviewers typically start basic and go deeper if you answer well.
+
+================================================================================
+REACT
+================================================================================
+
+  FUNDAMENTALS
+  [✓ KNOW]   How React works — Virtual DOM, reconciliation, JSX, one-way flow
+  [✓ KNOW]   Components — Function vs Class, Presentational vs Container
+  [✓ KNOW]   Controlled vs Uncontrolled components
+  [✓ KNOW]   Props and State — what they are, difference between them
+  [✓ KNOW]   Prop Drilling — what it is and why it is a problem
+  [✓ KNOW]   Solutions to prop drilling — Context API, Composition, Redux
+  [✓ KNOW]   Child to Parent communication — callback, useRef, Context
+  [  KNOW]   React component lifecycle — mounting, updating, unmounting phases
+  [→ LEARN]  Error Boundaries — catching errors in component trees
+  [→ LEARN]  React.memo — skipping re-renders for pure components
+
+  HOOKS
+  [✓ KNOW]   useState — return type, functional update, when to use
+  [✓ KNOW]   useEffect — return type, cleanup, dependency array, 3 behaviours
+  [✓ KNOW]   useContext — return type, when to use vs not
+  [✓ KNOW]   useRef — return type, vs plain variable, DOM access
+  [✓ KNOW]   useMemo — return type, when to use, when NOT to use
+  [✓ KNOW]   useCallback — return type, difference from useMemo
+  [✓ KNOW]   useReducer — return type, dispatch, reducer pattern
+  [✓ KNOW]   useLayoutEffect — return type, difference from useEffect
+  [✓ KNOW]   useId — return type, why it exists
+  [✓ KNOW]   useTransition — return type, isPending, non-urgent updates
+  [✓ KNOW]  Custom Hooks — writing your own hook, rules, when to extract one
+
+  [→ LEARN]  useDeferredValue — deferred rendering (briefly covered, revisit)
+  [→ LEARN]  useImperativeHandle — (briefly covered, revisit with forwardRef)
+
+  ROUTING & STRUCTURE
+  [→ LEARN]  React Router — BrowserRouter, Route, Link, useNavigate, useParams
+  [→ LEARN]  Nested routing — Outlet, layout routes
+  [→ LEARN]  Protected routes — redirecting unauthenticated users
+
+  PERFORMANCE
+  [→ LEARN]  Code splitting — React.lazy, Suspense, dynamic import
+  [→ LEARN]  React.memo — in depth, when it helps vs when it does not
+  [→ LEARN]  Performance profiling — React DevTools profiler
+
+  STATE MANAGEMENT
+  [✓ KNOW]   Context API — Provider, useContext, when to use
+  [→ LEARN]  Redux Toolkit — store, slice, createSlice, useSelector, useDispatch
+  [→ LEARN]  Zustand — simpler state management, when to prefer over Redux
+
+  FORMS
+  [→ LEARN]  React Hook Form — register, handleSubmit, validation
+  [→ LEARN]  Controlled vs Uncontrolled in forms — practical implementation
+
+  TESTING
+  [→ LEARN]  Jest basics — describe, it, expect, mocking
+  [→ LEARN]  React Testing Library — render, screen, fireEvent, userEvent
+
+================================================================================
+C# FUNDAMENTALS
+================================================================================
+
+  OOP
+  [✓ KNOW]   Encapsulation — private fields, properties, get/set
+  [✓ KNOW]   Inheritance — base/derived class, single inheritance, : syntax
+  [✓ KNOW]   Polymorphism — method overloading (compile-time) vs overriding (runtime)
+  [✓ KNOW]   Abstraction — abstract class vs interface, when to use each
+  [✓ KNOW]   Constructor — what it is, when it runs
+  [✓ KNOW]   Access modifiers — public, private, protected, internal
+  [~ REVIEW] sealed class — cannot be inherited, when to use
+  [→ LEARN]  Static class vs instance — static members, when to use static
+
+  ADVANCED C#
+  [✓ KNOW]   Extension Methods — static class, this keyword, when to use
+  [✓ KNOW]   Generics — type parameter T, generic class, generic method, constraints
+  [✓ KNOW]   Collections — List<T>, Dictionary, Queue, Stack, HashSet, IEnumerable
+  [✓ KNOW]   LINQ — Where, Select, OrderBy, GroupBy, First, Any, deferred execution
+  [✓ KNOW]   Lambda Expressions — =>, Func<T>, Action<T>, Predicate<T>
+  [✓ KNOW]   Delegates — type-safe function pointer, passing methods as data
+  [→ LEARN]  async / await — Task, Task<T>, async method, when to use
+  [→ LEARN]  Exception handling — try/catch/finally, custom exceptions, when to throw
+  [→ LEARN]  IDisposable — Dispose pattern, using statement, when it is needed
+  [→ LEARN]  Records (C# 9+) — immutable data types, with expressions
+  [→ LEARN]  Pattern matching — switch expressions, is patterns, C# 8/9/10 features
+  [→ LEARN]  Nullable reference types — ?, ??, ??=, null safety in C# 8+
+  [→ LEARN]  string vs StringBuilder — when to use StringBuilder for performance
+
+================================================================================
+.NET PLATFORM
+================================================================================
+
+  ARCHITECTURE & RUNTIME
+  [✓ KNOW]   .NET versions — Framework vs Core vs .NET 5+
+  [✓ KNOW]   CLR — what it is, what it manages
+  [✓ KNOW]   CIL / Intermediate Language — two-step compilation
+  [✓ KNOW]   JIT compilation — just-in-time, caching native code
+  [✓ KNOW]   Managed vs Unmanaged code
+  [✓ KNOW]   Assembly — .dll vs .exe, what it contains
+  [✓ KNOW]   BCL — Base Class Library, built-in toolbox
+  [✓ KNOW]   Garbage Collection — generations (0, 1, 2), LOH, Mark-Sweep-Compact
+  [✓ KNOW]   IDisposable and Dispose pattern — unmanaged resource cleanup
+  [✓ KNOW]   CTS — Value types vs Reference types, Boxing/Unboxing
+  [→ LEARN]  AOT compilation (Ahead-of-Time) — .NET 7+ native AOT, difference from JIT
+
+  DEPENDENCY INJECTION
+  [→ LEARN]  DI container — what it is, why it exists
+  [→ LEARN]  Service lifetimes — Transient, Scoped, Singleton — difference and when
+  [→ LEARN]  Registering services — AddTransient, AddScoped, AddSingleton
+  [→ LEARN]  Constructor injection — injecting via constructor (most common)
+  [→ LEARN]  Why DI — testability, loose coupling, SOLID D principle
+
+  ASYNC PROGRAMMING
+  [→ LEARN]  Task vs Thread — what is the difference
+  [→ LEARN]  async / await — how it works, ConfigureAwait
+  [→ LEARN]  Task.WhenAll / Task.WhenAny — parallel async execution
+  [→ LEARN]  Deadlocks — how they happen with async, how to avoid
+
+================================================================================
+ASP.NET CORE
+================================================================================
+
+  PIPELINE & REQUEST HANDLING
+  [✓ KNOW]   Middleware — pipeline, next(), built-in, custom middleware
+  [✓ KNOW]   Middleware types — pass-through, terminal, branch (Map)
+  [✓ KNOW]   Filters — Authorization, Resource, Action, Exception, Result
+  [✓ KNOW]   Filter pipeline — order of execution
+  [✓ KNOW]   Middleware vs Filters — difference, when to use which
+  [✓ KNOW]   Authentication — UseAuthentication() is middleware only
+  [✓ KNOW]   Authorization — UseAuthorization() middleware + [Authorize] filter
+  [→ LEARN]  Program.cs structure — WebApplication builder pattern, minimal APIs
+  [→ LEARN]  Model binding — how request data maps to action parameters
+  [→ LEARN]  Model validation — DataAnnotations, ModelState.IsValid
+
+  AUTHENTICATION & SECURITY
+  [→ LEARN]  JWT — structure (header.payload.signature), how token auth works
+  [→ LEARN]  Claims — what a claim is, ClaimsPrincipal, ClaimsIdentity
+  [→ LEARN]  Refresh tokens — why they exist, how they work with JWT
+  [→ LEARN]  OAuth 2.0 — authorization code flow, client credentials
+  [→ LEARN]  HTTPS and CORS — what CORS is, why it exists, how to configure
+
+  WEB API
+  [→ LEARN]  REST conventions — HTTP verbs, status codes (200/201/400/401/404/500)
+  [→ LEARN]  [ApiController] — automatic model validation, problem details
+  [→ LEARN]  IActionResult vs ActionResult<T> — when to use which
+  [→ LEARN]  API versioning — why it matters, how to implement
+  [→ LEARN]  Response caching — [ResponseCache], IMemoryCache, IDistributedCache
+  [→ LEARN]  Background services — IHostedService, BackgroundService
+
+================================================================================
+ENTITY FRAMEWORK CORE
+================================================================================
+
+  SETUP & BASICS
+  [✓ KNOW]   Packages — SqlServer, Tools, Design — what each does
+  [✓ KNOW]   Connection string — appsettings.json structure, parts explained
+  [✓ KNOW]   AppDbContext — DbSet<T>, OnModelCreating, constructor
+  [✓ KNOW]   Entity/Model — C# class → table, Id convention, Data Annotations
+  [✓ KNOW]   Fluent API — OnModelCreating alternative to annotations
+  [✓ KNOW]   Program.cs — AddDbContext, UseSqlServer, DI registration
+  [✓ KNOW]   Migrations — Add-Migration, Update-Database, Up/Down methods
+  [✓ KNOW]   CRUD — Add, Find, ToList, Remove, SaveChanges, async versions
+
+  ADVANCED EF
+  [→ LEARN]  Eager loading — Include(), ThenInclude() — JOIN in EF
+  [→ LEARN]  Lazy loading — loading related data on access (requires proxies)
+  [→ LEARN]  Explicit loading — Load() — manually trigger related data load
+  [→ LEARN]  N+1 problem — what it is, how Include() solves it
+  [→ LEARN]  AsNoTracking() — read-only queries, performance improvement
+  [→ LEARN]  Transactions — BeginTransaction, Commit, Rollback
+  [→ LEARN]  Concurrency tokens — handling simultaneous updates
+  [→ LEARN]  Raw SQL in EF — FromSqlRaw, ExecuteSqlRaw — when to use
+
+================================================================================
+MICROSERVICES
+================================================================================
+
+  CORE CONCEPTS
+  [✓ KNOW]   What a microservice is — characteristics, single responsibility
+  [✓ KNOW]   Types — Domain, Infrastructure, Aggregator, BFF
+  [✓ KNOW]   Communication — Synchronous (HTTP/gRPC) vs Asynchronous (queues)
+  [✓ KNOW]   Stateful vs Stateless — externalising state
+  [✓ KNOW]   Monolith vs Microservices — comparison, trade-offs
+  [✓ KNOW]   Greenfield vs Brownfield — Strangler Fig Pattern, ACL
+  [✓ KNOW]   API Gateway — routing, auth, rate limiting, aggregation
+  [✓ KNOW]   CQRS — Command vs Query, separate read/write stores
+  [✓ KNOW]   Service Discovery — registry, client-side vs server-side
+  [✓ KNOW]   Retry Pattern — exponential backoff, what to retry
+  [✓ KNOW]   Circuit Breaker — Closed/Open/Half-Open states
+
+  ADVANCED MICROSERVICES
+  [→ LEARN]  Message brokers — RabbitMQ vs Kafka, queue vs topic, when to use
+  [→ LEARN]  Event-driven architecture — events, producers, consumers
+  [→ LEARN]  Event Sourcing — storing events instead of current state
+  [→ LEARN]  Saga Pattern — distributed transactions without 2PC
+  [→ LEARN]  Outbox Pattern — guaranteed message delivery with transactions
+  [→ LEARN]  CAP theorem — Consistency, Availability, Partition tolerance
+  [→ LEARN]  Distributed tracing — trace ID, span, correlation across services
+  [→ LEARN]  Health checks — readiness vs liveness probes
+
+  INFRASTRUCTURE
+  [→ LEARN]  Docker basics — image, container, Dockerfile, docker-compose
+  [→ LEARN]  Kubernetes basics — pod, service, deployment, ingress
+
+================================================================================
+DATABASE & SQL
+================================================================================
+
+  SQL BASICS
+  [→ LEARN]  SELECT, WHERE, ORDER BY, GROUP BY — basic queries
+  [→ LEARN]  JOINs — INNER, LEFT, RIGHT, FULL — when to use each
+  [→ LEARN]  Indexes — what they are, clustered vs non-clustered, when to add
+  [→ LEARN]  Primary key vs Foreign key vs Unique key
+  [→ LEARN]  Stored Procedures — what they are, when to use vs EF queries
+  [→ LEARN]  Transactions — ACID properties (Atomicity, Consistency, Isolation, Durability)
+
+  ADVANCED DB
+  [→ LEARN]  Query optimization — execution plan, avoiding full table scans
+  [→ LEARN]  Normalization — 1NF, 2NF, 3NF — what and why
+  [→ LEARN]  NoSQL basics — document store (MongoDB), key-value (Redis), when to use
+
+================================================================================
+SYSTEM DESIGN & ARCHITECTURE
+================================================================================
+
+  DESIGN PATTERNS
+  [→ LEARN]  Repository Pattern — abstraction over data access, why it is used
+  [→ LEARN]  Unit of Work Pattern — coordinating multiple repositories
+  [→ LEARN]  Singleton — one instance for the app lifetime
+  [→ LEARN]  Factory — creating objects without specifying exact class
+  [→ LEARN]  Observer / Event — pub/sub, decoupled notification
+  [→ LEARN]  Decorator — wrapping a class to add behaviour
+  [→ LEARN]  Strategy — swappable algorithm at runtime
+
+  ARCHITECTURAL PATTERNS
+  [✓ KNOW]   SOLID principles — S, O, L, I, D (covered in dotnet_fundamentals)
+  [→ LEARN]  Clean Architecture — layers (Domain, Application, Infrastructure, API)
+  [→ LEARN]  Onion Architecture — dependency direction, core has no dependencies
+  [→ LEARN]  DDD basics — Entity, Value Object, Aggregate, Domain Event
+  [→ LEARN]  Vertical slice architecture — feature folders instead of layers
+
+  CACHING
+  [→ LEARN]  In-memory cache — IMemoryCache, when it is enough
+  [→ LEARN]  Distributed cache — Redis, IDistributedCache, when to use
+  [→ LEARN]  Cache-aside pattern — read from cache, fallback to DB, write back
+
+  LOGGING & MONITORING
+  [→ LEARN]  Structured logging — Serilog, log levels, correlation IDs
+  [→ LEARN]  Application Insights / OpenTelemetry — monitoring distributed apps
+
+================================================================================
+GENERAL INTERVIEW TOPICS
+================================================================================
+
+  REST & API
+  [→ LEARN]  HTTP status codes — know the key ones (200, 201, 204, 400, 401,
+             403, 404, 409, 422, 429, 500, 503)
+  [→ LEARN]  REST vs GraphQL vs gRPC — differences, when to use each
+  [→ LEARN]  Idempotency — what it means, which HTTP methods are idempotent
+
+  TESTING
+  [→ LEARN]  Unit testing basics — Arrange/Act/Assert, what to test
+  [→ LEARN]  Mocking — what a mock/stub is, Moq library in .NET
+  [→ LEARN]  Integration testing — testing the full pipeline with TestServer
+  [→ LEARN]  Test coverage — what it is, how much is enough
+
+  GIT & WORKFLOW
+  [→ LEARN]  Git branching — main, feature branches, PR workflow
+  [→ LEARN]  Merge vs Rebase — difference, when to use
+
+================================================================================
+PRIORITY ORDER FOR INTERVIEW PREP
+================================================================================
+
+  Study in this order — highest interview frequency first:
+
+  1.  Dependency Injection — DI lifetimes are asked in almost every .NET interview
+  2.  async / await — heavily asked for .NET and React roles
+  3.  JWT Authentication — nearly universal in web API interviews
+  4.  REST conventions + HTTP status codes — basic but always asked
+  5.  Repository Pattern + Unit of Work — very common in .NET API interviews
+  6.  SQL JOINs and Indexes — asked in most full-stack interviews
+  7.  Custom Hooks (React) — commonly asked in React interviews
+  8.  React Router — expected knowledge for any React role
+  9.  Redux Toolkit — expected if the job mentions state management
+  10. SOLID in depth with code examples — architecture interviews always ask this
+  11. EF Core advanced — N+1, AsNoTracking, Include — asked in .NET interviews
+  12. Docker basics — increasingly asked even in non-DevOps roles
+  13. Clean Architecture — asked in senior/mid level .NET interviews
+  14. Message brokers (RabbitMQ/Kafka) — asked in microservices roles
+
+================================================================================
+QUICK COUNT
+================================================================================
+
+  Total topics tracked : ~110
+  Already know         : ~45   (all documented in C:\Study\)
+  Need to learn        : ~65
+
+  You have a solid foundation. The biggest gaps before an interview are:
+  → Dependency Injection lifetimes
+  → async / await
+  → JWT and security
+  → Repository Pattern
+  → SQL fundamentals
+  → React Router and Redux Toolkit
+
+================================================================================
+END OF DOCUMENT
+================================================================================

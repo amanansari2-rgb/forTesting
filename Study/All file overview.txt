@@ -1,0 +1,92 @@
+Here's a simple paragraph for every folder:
+
+Controllers — This is where all the API endpoints live. Every file here handles incoming HTTP requests from the frontend (like login, get patients, create appointment) and sends back responses. Think of it as the front door of the backend.
+
+DTO — DTO stands for Data Transfer Object. These are simple classes that define exactly what data goes in (request body) and what comes out (response). They make sure the frontend and backend always speak the same shape of data.
+
+Data — Contains AppDbContext.cs which is the bridge between your code and the SQL database. Every table in the DB is defined here. Also has SeedData.cs which is used to insert default/test data into the DB on startup.
+
+Exceptions — Contains only BusinessRuleException.cs. This is a custom exception used to signal business logic errors like "email already exists" or "invalid status". Instead of crashing, it carries a code and message that gets turned into a clean error response.
+
+Infrastructure — Contains helper classes that support the app's plumbing. Right now it has HangfireAdminAuthorizationFilter.cs which protects the Hangfire dashboard so only Admins can open it.
+
+Jobs — Contains all the scheduled background tasks that run automatically without anyone calling them. Appointment reminders, overdue task checks, waitlist expiry, and anomaly detection all live here.
+
+Logs — Contains daily .log files automatically written by Serilog (the logging package). Every error, warning, and info message from the running app gets saved here as a text file, one file per day.
+
+Middleware — Contains ExceptionMiddleware.cs which wraps every single request in a try/catch. If anything throws an unhandled exception anywhere in the app, this catches it and converts it into a clean JSON error response instead of crashing.
+
+Migrations — Contains the history of all database changes. Every time you add or change a model and run dotnet ef migrations add, a new file is created here. These files are what actually create and update your SQL tables.
+
+Model — Contains all the database table definitions. Every file here (like Patient.cs, User.cs, Appointment.cs) represents one table in SQL Server. These are the raw database models, not what the frontend sees.
+
+Properties — Contains launchSettings.json which stores local development settings like which port to run on and which browser to open. This file is only used on your local machine and never goes to production.
+
+Repositories — Contains the database query code. Split into Interface (the contract) and Implementation (the actual SQL queries using Entity Framework). Services never touch the DB directly — they always go through repositories.
+
+Services — Contains the business logic of the app. Split into Interface and Implementation. This is where the real work happens — validating rules, coordinating between repositories, and making decisions. Controllers call services, services call repositories.
+
+
+
+=> Authentication work in clinic flow outpatient and resource management system.
+When the user lands on the login page, which is AuthPage.jsx inside src/pages/auth/, they see a login form with email and password fields. This single file handles both login and registration using a toggle-based UI, where the user can switch between the two forms without navigating to a different route.
+
+When the user enters their email and password and hits the Login button, the validateLogin function runs first on the client side — it checks if the email is empty, validates it against a regex pattern, and ensures the password field is not empty. If any check fails, errors are shown inline below each field and the form stops there without making any API call. Only when all validations pass does handleLogin call the login function from AuthContext.
+
+The login function in AuthContext passes the email and password to authService.login(), which uses axiosClient to make a POST request to /api/auth/login on the backend. On the backend, the AuthController receives this request as a LoginRequestDto which is a simple C# object carrying just two fields — email and password. The controller runs its own server-side validation as well, checking the email format and password length, and if everything is valid it passes the DTO to _authService.LoginAsync().
+
+Inside LoginAsync, the method first fetches the user from the database by email and verifies the password using BCrypt. After that it checks one condition — user.IsMfaEnabled. If IsMfaEnabled is false, which is the normal case, it skips the MFA block entirely and builds the LoginResponseDto with AccessToken, RefreshToken, Role, and Name. Since RequiresMfa and MfaChallengeToken are never explicitly set, they fall back to their default DTO values — false and null — which is exactly why you see "requiresMfa": false and "mfaChallengeToken": null in the response.
+
+Back on the frontend, once the response arrives, the accessToken is immediately saved to localStorage, and then a second call is made to /auth/me to fetch the full user profile like userId, name, and role. This user object is then stored in React state using setUser(), and the user is redirected to their role-specific dashboard based on their role.
+
+Since the user data is stored in React Context via AuthProvider which wraps the entire app, any component anywhere in the application can access the logged-in user's details simply by calling the useAuth() hook and reading user.role, user.name, or user.providerId without any prop drilling. And because the accessToken is saved in localStorage, even if the user refreshes the page, the app picks up the token on startup, calls /auth/me again to rebuild the user object, and keeps the user logged in.
+
+
+after log in process
+Once the user is logged in, the accessToken is already sitting in localStorage. So when the user does anything that triggers a backend call — like opening their dashboard, booking an appointment, or fetching their records — here is exactly what happens:
+
+1. The component calls the API
+The component uses axiosClient to make a request, for example axiosClient.get('/appointments').
+
+2. Request interceptor fires automatically
+Before the request even goes out, the request interceptor checks localStorage for the accessToken and finds it. It then automatically attaches it to every request as:
+
+Authorization: Bearer <token>
+The component itself does not need to worry about this — it happens silently on every single request.
+
+3. Backend receives the request
+The backend reads the Authorization header, verifies the JWT token, confirms who the user is and what their role is, and then processes the request and sends back the data.
+
+4. If the token is expired — 401 comes back
+The response interceptor catches the 401, silently calls /auth/refresh-token with the refreshToken from localStorage, gets a new accessToken, saves it, and then automatically retries the original request — so the user never sees an error or gets interrupted.
+
+5. If the refresh also fails
+It means the session is fully expired, so it clears everything from localStorage and redirects the user back to /login.
+
+So in short — after login, the user never has to manually pass any token anywhere. The request interceptor handles attaching the token on every call, and the response interceptor handles token expiry and refresh silently in the background. The components just call the API and get the data back.
+
+
+
+During the Login Call (POST /auth/login)
+
+200 OK — credentials are valid, returns the LoginResponseDto with the token, role, and name
+400 Bad Request — server-side validation fails, for example email is empty, email format is invalid, password is empty, or password is less than 6 characters, or the request body itself is null
+401 Unauthorized — email and password don't match any active user in the database — backend throws UnauthorizedAccessException with "Invalid credentials"
+500 Internal Server Error — something unexpected crashes on the backend, returns "An unexpected error occurred. Please try again."
+After Login — on any protected API call
+
+200 OK — request is successful, data is returned
+401 Unauthorized — the accessToken is expired or invalid, triggers the refresh interceptor
+400 Bad Request — the request data sent was invalid for that specific endpoint
+403 Forbidden — the user is authenticated but does not have the right role or permission to access that resource
+404 Not Found — the requested resource does not exist
+500 Internal Server Error — something crashed on the backend
+
+
+
+
+MFA works flow
+When a user wants to enable MFA, they go to the Settings page and click "Enable two-factor auth", which calls POST /auth/mfa/setup — this endpoint generates a cryptographically random 20-byte secret, encodes it in Base32, stores it temporarily against the user in the database, and returns an otpauth:// URI containing the issuer name ("ClinicFlow"), the user's email, and the Base32 secret. The frontend receives this URI and passes it to the react-qr-code library to render a scannable QR code, which the user scans with any standard authenticator app like Google Authenticator or Authy. Once scanned, the app starts generating 6-digit TOTP codes every 30 seconds using the shared secret. The user then enters that code and the frontend calls POST /auth/mfa/enable, where the backend uses the Otp.NET library to verify the code against the stored secret with a ±1 window to tolerate slight clock skew — if it matches, IsMfaEnabled is set to true and MFA is fully activated. From that point on, whenever the user logs in, they submit their email and password to POST /auth/login as usual, but instead of receiving a full JWT, the backend detects IsMfaEnabled == true and responds with { requiresMfa: true, mfaChallengeToken } — a single-use 32-character hex token generated via Guid.NewGuid().ToString("N") that expires in 5 minutes. The frontend navigates to /mfa-verify, the user enters the 6-digit code from their authenticator app, and the frontend calls POST /auth/mfa/verify with both the challenge token and the code. The backend looks up the user by that token, checks it hasn't expired, verifies the TOTP code, nulls out the challenge token so it can never be reused, and finally issues the full JWT access and refresh token pair — only then does the user land on their dashboard.
+
+
+

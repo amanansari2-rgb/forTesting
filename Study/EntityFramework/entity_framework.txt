@@ -1,0 +1,499 @@
+================================================================================
+ENTITY FRAMEWORK CORE — SETUP AND USAGE IN .NET
+================================================================================
+
+--------------------------------------------------------------------------------
+THINGS YOU SHOULD KNOW FIRST
+--------------------------------------------------------------------------------
+
+--- What an ORM Is ---
+
+Technical definition:
+  An ORM (Object-Relational Mapper) is a library that maps database tables to
+  C# classes, and database rows to C# objects. It lets you read and write to
+  a database using C# code instead of raw SQL queries. The ORM translates your
+  C# operations into SQL behind the scenes.
+
+Simple way:
+  Without an ORM, you write raw SQL strings inside C# code to talk to the
+  database. With an ORM, you work with regular C# classes and objects — the
+  library figures out the SQL for you.
+
+
+--- What a Connection String Is ---
+
+Technical definition:
+  A connection string is a formatted string that contains the information
+  needed to connect to a database — the server address, database name, and
+  authentication method (username/password or Windows auth).
+
+Simple way:
+  A connection string is the address + credentials your app uses to find and
+  log into the database. It lives in appsettings.json so you do not hardcode
+  it in your code.
+
+
+--- What a Migration Is ---
+
+Technical definition:
+  A migration is a code-generated file that describes a set of changes to the
+  database schema (creating tables, adding columns, etc.). EF Core generates
+  migrations by comparing your current C# model classes against the last known
+  database state. Running migrations applies those changes to the actual database.
+
+Simple way:
+  When you add a new class or change a property, the database does not update
+  automatically. A migration is a script EF Core generates to bring the database
+  in line with your current C# classes. You create it, then run it.
+
+
+--- What DbContext Is (overview) ---
+
+Technical definition:
+  DbContext is the central class in EF Core. It represents a session with the
+  database. It holds the connection, tracks changes to objects in memory, and
+  translates C# operations into SQL queries when SaveChanges() is called.
+
+Simple way:
+  DbContext is your application's gateway to the database. Everything you do
+  with the database — query, insert, update, delete — goes through it.
+
+--------------------------------------------------------------------------------
+1. PACKAGES TO INSTALL
+--------------------------------------------------------------------------------
+
+Technical definition:
+  EF Core is split into separate NuGet packages. You need the core package,
+  a database provider package for your specific database type, and the tools
+  package to run migration commands.
+
+Simple way:
+  You install three packages. One is EF Core itself. One is for your database
+  type (SQL Server, PostgreSQL, SQLite, etc.). One gives you the migration
+  commands.
+
+--- Required Packages ---
+
+  Package                                    | Purpose
+  -------------------------------------------|-------------------------------
+  Microsoft.EntityFrameworkCore              | EF Core engine (always needed)
+  Microsoft.EntityFrameworkCore.SqlServer    | SQL Server provider
+  Microsoft.EntityFrameworkCore.Tools        | Enables migration CLI commands
+
+
+--------------------------------------------------------------------------------
+2. ENTITY (MODEL CLASS)
+--------------------------------------------------------------------------------
+
+Technical definition:
+  An entity is a C# class that maps to a database table. Each property in the
+  class maps to a column. By convention, a property named Id or <ClassName>Id
+  is automatically treated as the primary key.
+
+Simple way:
+  You write a plain C# class. EF Core reads it and creates a matching table.
+  Each property becomes a column. The class named User becomes a table called
+  Users.
+
+Example:
+  public class User
+  {
+      public int Id { get; set; }          // primary key — auto-detected by name
+      public string Name { get; set; }
+      public string Email { get; set; }
+  }
+
+  public class Order
+  {
+      public int Id { get; set; }
+      public DateTime CreatedAt { get; set; }
+      public int UserId { get; set; }      // foreign key
+      public User User { get; set; }       // navigation property
+  }
+
+--- Data Annotations (optional, adds rules to columns) ---
+
+  [Key]                → marks property as primary key (if not named Id)
+  [Required]           → column cannot be null
+  [MaxLength(100)]     → sets max string length
+  [Column("col_name")] → overrides the column name in the database
+  [NotMapped]          → this property is NOT saved to the database
+
+Example:
+  public class Product
+  {
+      [Key]
+      public int ProductId { get; set; }
+
+      [Required]
+      [MaxLength(200)]
+      public string Name { get; set; }
+
+      public decimal Price { get; set; }
+  }
+
+--------------------------------------------------------------------------------
+3. AppDbContext
+--------------------------------------------------------------------------------
+
+Technical definition:
+  AppDbContext is a class you create that inherits from DbContext. It defines
+  which entity classes are part of the database model through DbSet<T> properties.
+  Each DbSet<T> represents one table. The constructor accepts DbContextOptions,
+  which carries the connection string and provider configuration injected from
+  Program.cs. OnModelCreating() is an optional override for advanced configuration
+  using the Fluent API.
+
+Simple way:
+  AppDbContext is your database class. You list all your tables inside it as
+  DbSet properties. EF Core reads this class to know what tables exist and how
+  they are connected.
+
+--- Basic AppDbContext ---
+
+  public class AppDbContext : DbContext
+  {
+      public AppDbContext(DbContextOptions<AppDbContext> options)
+          : base(options) { }
+
+      public DbSet<User> Users { get; set; }
+      public DbSet<Order> Orders { get; set; }
+      public DbSet<Product> Products { get; set; }
+  }
+
+  Each DbSet<T> = one table in the database.
+  DbSet<User> Users → creates a table called "Users".
+
+
+--- OnModelCreating (Fluent API — optional) ---
+
+Technical definition:
+  OnModelCreating is an override in DbContext where you configure entity
+  mappings using the Fluent API — an alternative to Data Annotations that
+  keeps configuration out of the model class itself. It is called once when
+  the model is first built.
+
+Simple way:
+  If you do not want to put attributes ([Required], [MaxLength]) directly on
+  your model class, you can put those rules here instead using method chaining.
+  Both approaches do the same thing — this one keeps model classes cleaner.
+
+Example:
+  protected override void OnModelCreating(ModelBuilder modelBuilder)
+  {
+      modelBuilder.Entity<User>(entity =>
+      {
+          entity.Property(u => u.Name)
+                .IsRequired()
+                .HasMaxLength(100);
+
+          entity.Property(u => u.Email)
+                .IsRequired()
+                .HasMaxLength(200);
+      });
+
+      modelBuilder.Entity<Order>()
+                  .HasOne(o => o.User)
+                  .WithMany()
+                  .HasForeignKey(o => o.UserId);
+  }
+
+--------------------------------------------------------------------------------
+4. appsettings.json
+--------------------------------------------------------------------------------
+
+Technical definition:
+  appsettings.json is the configuration file for a .NET application. The
+  connection string is stored under the "ConnectionStrings" key so the app
+  can read it at startup without hardcoding database credentials in source code.
+
+Simple way:
+  This is where you put your database address and login details. Your code
+  reads it from here at runtime. You never write the connection string directly
+  in C# code.
+
+--- SQL Server example ---
+
+  {
+    "ConnectionStrings": {
+      "DefaultConnection": "Server=.;Database=MyAppDb;Trusted_Connection=True;TrustServerCertificate=True;"
+    },
+    "Logging": {
+      "LogLevel": {
+        "Default": "Information"
+      }
+    }
+  }
+
+--- Connection string parts explained ---
+
+  Server=.                      → "." means local machine. Replace with server
+                                  name or IP for a remote server.
+                                  Example: Server=myserver.database.windows.net
+
+  Database=MyAppDb              → Name of the database. EF Core creates it if
+                                  it does not exist when migrations run.
+
+  Trusted_Connection=True       → Use Windows Authentication (no username/password).
+                                  For SQL login use:
+                                  User Id=sa;Password=yourpassword; instead.
+
+  TrustServerCertificate=True   → Skips SSL certificate validation. Needed for
+                                  local development with SQL Server.
+
+--- For other databases ---
+
+  PostgreSQL:
+    "DefaultConnection": "Host=localhost;Database=MyAppDb;Username=postgres;Password=yourpassword"
+
+  SQLite:
+    "DefaultConnection": "Data Source=myapp.db"
+
+--------------------------------------------------------------------------------
+5. PROGRAM.CS — REGISTERING THE DBCONTEXT
+--------------------------------------------------------------------------------
+
+Technical definition:
+  AppDbContext must be registered in the dependency injection (DI) container
+  in Program.cs using AddDbContext<T>(). This tells .NET how to create and
+  configure the DbContext when it is needed. The options delegate specifies the
+  database provider and reads the connection string from configuration.
+
+Simple way:
+  You tell the app in Program.cs: "when something needs AppDbContext, here is
+  how to create it — use SQL Server and read the connection string from
+  appsettings.json." After this, you can inject AppDbContext anywhere in your
+  app automatically.
+
+--- Program.cs setup ---
+
+  var builder = WebApplication.CreateBuilder(args);
+
+  // Register AppDbContext with SQL Server
+  builder.Services.AddDbContext<AppDbContext>(options =>
+      options.UseSqlServer(
+          builder.Configuration.GetConnectionString("DefaultConnection")
+      )
+  );
+
+  builder.Services.AddControllers();
+
+  var app = builder.Build();
+  app.MapControllers();
+  app.Run();
+
+--- What each part does ---
+
+  builder.Services.AddDbContext<AppDbContext>(...)
+    → Registers AppDbContext in the DI container. Lifetime is Scoped by default
+      (one instance per HTTP request).
+
+  options.UseSqlServer(...)
+    → Tells EF Core to use the SQL Server provider.
+      For other databases: UseNpgsql(), UseSqlite(), UseMySql()
+
+  builder.Configuration.GetConnectionString("DefaultConnection")
+    → Reads the "DefaultConnection" value from appsettings.json.
+
+--------------------------------------------------------------------------------
+6. MIGRATIONS
+--------------------------------------------------------------------------------
+
+Technical definition:
+  EF Core migrations are auto-generated C# files that represent schema changes.
+  The Add-Migration command compares your current DbContext and entity classes
+  against the last migration snapshot and generates a new migration file
+  describing the difference. The Update-Database command executes pending
+  migration files against the actual database.
+
+Simple way:
+  Once you have your entities and DbContext set up, you need to create the
+  actual tables in the database. Migrations do this in two steps:
+  1. Generate the migration (creates a file describing what to do)
+  2. Apply it (runs that file against the database)
+
+--- Commands ---
+
+  Using Package Manager Console (Visual Studio):
+
+    Add-Migration InitialCreate
+      → Generates a new migration file. "InitialCreate" is just the name
+        you give it — use a descriptive name for what changed.
+
+    Update-Database
+      → Applies all pending migrations to the database.
+        Creates the database if it does not exist.
+
+    Remove-Migration
+      → Removes the last migration if you have not applied it yet.
+
+    Update-Database 0
+      → Rolls back ALL migrations (drops all tables).
+
+  Using .NET CLI:
+
+    dotnet ef migrations add InitialCreate
+    dotnet ef database update
+    dotnet ef migrations remove
+
+--- What a migration file looks like ---
+
+  EF Core creates two files in a Migrations folder:
+
+  20240601_InitialCreate.cs     → the Up() and Down() methods
+  AppDbContextModelSnapshot.cs  → snapshot of the current model state
+
+  Inside the migration:
+
+    public partial class InitialCreate : Migration
+    {
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.CreateTable(
+                name: "Users",
+                columns: table => new {
+                    Id    = table.Column<int>(nullable: false)
+                                 .Annotation("SqlServer:Identity", "1, 1"),
+                    Name  = table.Column<string>(nullable: true),
+                    Email = table.Column<string>(nullable: true)
+                },
+                constraints: table => {
+                    table.PrimaryKey("PK_Users", x => x.Id);
+                }
+            );
+        }
+
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropTable(name: "Users");
+        }
+    }
+
+  Up()   → what to do when applying the migration (create table)
+  Down() → how to undo it (drop table)
+
+  You never need to write this file manually — EF Core generates it.
+  You only edit it in rare advanced cases.
+
+--------------------------------------------------------------------------------
+7. BASIC CRUD OPERATIONS
+--------------------------------------------------------------------------------
+
+Technical definition:
+  CRUD operations (Create, Read, Update, Delete) are performed through the
+  DbSet<T> properties on AppDbContext. Changes to tracked entities are written
+  to the database only when SaveChanges() or SaveChangesAsync() is called.
+  EF Core tracks the state of each object (Added, Modified, Deleted, Unchanged)
+  and generates the appropriate SQL.
+
+Simple way:
+  You use the DbContext to add, find, change, or remove objects. Nothing is
+  actually written to the database until you call SaveChanges(). That one call
+  sends all your pending changes as a single SQL transaction.
+
+--- Injecting DbContext into a Controller / Service ---
+
+  public class UserService
+  {
+      private readonly AppDbContext _context;
+
+      public UserService(AppDbContext context)
+      {
+          _context = context;  // injected automatically by DI
+      }
+  }
+
+
+--- CREATE ---
+
+  var user = new User { Name = "Aman", Email = "aman@example.com" };
+  _context.Users.Add(user);
+  _context.SaveChanges();
+  // INSERT INTO Users (Name, Email) VALUES ('Aman', 'aman@example.com')
+
+
+--- READ ---
+
+  // Get by primary key — returns null if not found
+  var user = _context.Users.Find(1);
+
+  // Get all
+  var allUsers = _context.Users.ToList();
+
+  // Filter with LINQ
+  var user = _context.Users
+                     .FirstOrDefault(u => u.Email == "aman@example.com");
+
+  // With related data (eager loading)
+  var orders = _context.Orders
+                       .Include(o => o.User)
+                       .ToList();
+  // Joins Orders and Users in one query
+
+
+--- UPDATE ---
+
+  var user = _context.Users.Find(1);
+  user.Name = "Updated Name";
+  _context.SaveChanges();
+  // EF Core detects the change and runs UPDATE automatically
+
+
+--- DELETE ---
+
+  var user = _context.Users.Find(1);
+  _context.Users.Remove(user);
+  _context.SaveChanges();
+  // DELETE FROM Users WHERE Id = 1
+
+
+--- Async versions (recommended for web apps) ---
+
+  await _context.Users.AddAsync(user);
+  await _context.SaveChangesAsync();
+
+  var users = await _context.Users.ToListAsync();
+  var user  = await _context.Users.FindAsync(1);
+
+  Use async versions in controllers and services to avoid blocking threads
+  while waiting for the database.
+
+--------------------------------------------------------------------------------
+SETUP CHECKLIST — QUICK REFERENCE
+--------------------------------------------------------------------------------
+
+  Step | What to do
+  -----|-----------------------------------------------------------------------
+  1    | Install packages: SqlServer + Tools + Design via NuGet or CLI
+  2    | Create entity classes (plain C# classes with Id property)
+  3    | Create AppDbContext — inherit DbContext, add DbSet<T> for each entity
+  4    | Add connection string to appsettings.json under "ConnectionStrings"
+  5    | Register in Program.cs with AddDbContext + UseSqlServer
+  6    | Run: Add-Migration InitialCreate
+  7    | Run: Update-Database  (creates the database and tables)
+  8    | Inject AppDbContext into your services/controllers and use it
+
+--------------------------------------------------------------------------------
+SUMMARY TABLE
+--------------------------------------------------------------------------------
+
+  Term                 | What It Is
+  ---------------------|----------------------------------------------------------
+  ORM                  | Maps C# classes to database tables — no raw SQL needed
+  Entity               | A C# class that represents one database table
+  DbSet<T>             | Represents one table — defined inside AppDbContext
+  AppDbContext         | Your database session class — central access point
+  Connection String    | Address + credentials to connect to the database
+  appsettings.json     | Config file where the connection string is stored
+  AddDbContext()       | Registers AppDbContext in the DI container (Program.cs)
+  Migration            | Auto-generated file describing schema changes
+  Add-Migration        | Command to generate a new migration file
+  Update-Database      | Command to apply pending migrations to the database
+  SaveChanges()        | Sends all pending changes to the database as SQL
+  Find(id)             | Reads one record by primary key
+  Include()            | Loads related data (JOIN) — called eager loading
+  Async methods        | Non-blocking versions (SaveChangesAsync, ToListAsync)
+
+--------------------------------------------------------------------------------
+END OF DOCUMENT
+================================================================================

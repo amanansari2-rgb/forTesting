@@ -1,0 +1,601 @@
+================================================================================
+  CLINICFLOW — SERILOG & LOGGING TECHNICAL GUIDE
+  Version 1.0 | ClinicFlow Backend | 2026
+================================================================================
+
+TABLE OF CONTENTS
+-----------------
+1.  Why Do We Need Logging?
+2.  What Is Serilog?
+3.  Why Serilog? Are There Other Options?
+4.  Packages Installed
+5.  Where It All Starts — Program.cs
+6.  HTTP Request Logging — UseSerilogRequestLogging
+7.  Log Levels — How Serious Is This?
+8.  How ILogger Is Used Across the Project
+9.  The Middleware Pipeline — Order Matters
+10. Full Log Flow — A Real Example
+11. How to Read the Log File
+12. Complete Summary
+
+
+================================================================================
+1. WHY DO WE NEED LOGGING?
+================================================================================
+
+Imagine a clinic. Every day hundreds of things happen — doctors see patients,
+nurses give medications, receptionists book appointments. If something goes
+wrong (a wrong dose, a missed appointment, a billing error), the clinic needs
+to look back and find out what happened, when, and who was involved.
+Logs are that record.
+
+In software, logging is the same idea. It is the system writing notes to itself
+as it runs — what requests came in, what errors happened, how long things took,
+who was logged in. Without logs, when something breaks in production you are
+completely blind.
+
+Specific Reasons ClinicFlow Needs Logs:
+  - Debugging:     When a bug is reported, logs show exactly what the system
+                   was doing at that moment
+  - Performance:   Logs show how long each API request takes — useful for
+                   finding slow endpoints
+  - Security:      Logs record failed logins, unauthorized access attempts,
+                   and unexpected errors
+  - Compliance:    Healthcare systems often need to prove what happened and when
+  - Operations:    When the server restarts or crashes, logs explain why
+
+--------------------------------------------------------------------------------
+IMPORTANT: Logging vs Audit Logs — Two Different Things
+--------------------------------------------------------------------------------
+
+  Serilog logs (covered in this document):
+    - Operational and developer logs
+    - Track HTTP requests, errors, exceptions, system events
+    - Written to the console (terminal) and log files on disk
+    - Developers and DevOps read these
+
+  Audit logs (what the Auditor sees on the web page):
+    - Business-level logs — WHO did WHAT to WHICH record
+    - Stored in the SQL Server database (AuditLogs table)
+    - Completely separate from Serilog — never written to files
+    - The Auditor reads these through the web interface
+
+These are two completely separate systems. Serilog failing does not affect
+audit logs. Audit logs failing does not affect Serilog.
+
+
+================================================================================
+2. WHAT IS SERILOG?
+================================================================================
+
+Serilog is a popular open-source logging library for .NET.
+The name comes from "Structured Logging" — instead of writing plain text lines,
+it writes structured data where each piece of information has a named field.
+
+────────────────────────────────────────
+Traditional (plain text) logging:
+────────────────────────────────────────
+
+    User 12345 logged in at 14:23:01 from /api/auth/login in 88ms
+
+With this you can only read the text. You cannot filter by user ID, status code,
+or elapsed time without parsing the text yourself.
+
+────────────────────────────────────────
+Structured logging (Serilog):
+────────────────────────────────────────
+
+    {
+      "Timestamp":  "2026-05-31T14:23:01Z",
+      "Level":      "Information",
+      "Message":    "HTTP POST /api/auth/login responded 200 in 88ms",
+      "UserId":     "a1b2-c3d4-...",
+      "UserEmail":  "john@clinic.com",
+      "UserRole":   "Clinician",
+      "StatusCode": 200,
+      "Elapsed":    88.3
+    }
+
+With structured logs you can filter, search, and analyse each named field.
+When you have thousands of log lines, this matters a lot.
+
+
+================================================================================
+3. WHY SERILOG? ARE THERE OTHER OPTIONS?
+================================================================================
+
+Yes, there are several logging libraries for .NET. Here is how they compare:
+
+  Library              Type              Pros                      Cons
+  ─────────────────────────────────────────────────────────────────────────────
+  Built-in ILogger     Microsoft default No extra package needed,  Basic — no structured
+                                         works everywhere          logging, limited output
+                                                                   destinations
+
+  Serilog              Third-party       Structured logging, many  One extra NuGet
+                       (open-source)     sinks, great ASP.NET      package required
+                                         integration, active
+                                         community
+
+  NLog                 Third-party       Mature, XML config,       Older design, less
+                       (open-source)     many targets              intuitive for .NET Core
+
+  Log4Net              Ported from Java  Very established,         Old API, complex XML
+                                         runs everywhere           config, not .NET-native
+
+  Seq                  Commercial        Beautiful UI, real-time   External service,
+                       cloud tool        search                    costs money, overkill
+
+WHY WE CHOSE SERILOG:
+  1. Best ASP.NET Core integration — one line to log every HTTP request
+  2. The ILogger<T> interface (standard .NET) still works — Serilog just
+     powers it behind the scenes, so all existing code is compatible
+  3. Sinks are easy — adding console, file, or cloud is just one extra line
+  4. Most widely used logging library in the .NET ecosystem in 2024-2026
+  5. Small and maintained — Serilog.AspNetCore is under 1MB
+
+
+================================================================================
+4. PACKAGES INSTALLED
+================================================================================
+
+These are declared in ClinicFlow-Backend.csproj and downloaded by dotnet restore:
+
+  Package                        Version  What It Does
+  ─────────────────────────────────────────────────────────────────────────────
+  Serilog.AspNetCore             8.0.3    Core integration — hooks Serilog into
+                                          the ASP.NET host and request pipeline.
+                                          This is the main package.
+
+  Serilog.Sinks.Console          6.0.0    A "sink" is a destination for logs.
+                                          This one writes to the terminal window.
+
+  Serilog.Sinks.File             6.0.0    Writes logs to a file on disk with
+                                          rolling/rotation support.
+
+  Serilog.Formatting.Compact     3.0.0    A compact JSON formatter — useful if
+                                          you want machine-readable log files.
+                                          (Installed but not currently used.)
+
+Think of Serilog like a plumbing system:
+  - The core library = the pipe
+  - Sinks = where the water comes out (console, file, cloud)
+  - You can have multiple sinks active at the same time
+
+
+================================================================================
+5. WHERE IT ALL STARTS — PROGRAM.CS
+================================================================================
+
+Logging is configured at the very start of the application, in Program.cs.
+This file runs when the server boots up. The Serilog setup is one of the
+first things that happens.
+
+────────────────────────────────────────
+5.1  The Serilog Configuration Block (Program.cs lines 26-33)
+────────────────────────────────────────
+
+    // ── Serilog ──────────────────────────────────────────────────────────
+    builder.Host.UseSerilog((ctx, lc) => lc
+        .ReadFrom.Configuration(ctx.Configuration)   // read from appsettings.json
+        .Enrich.FromLogContext()                      // carry extra properties into logs
+        .WriteTo.Console()                            // print to terminal
+        .WriteTo.File("Logs/clinicflow-.log",         // write to file
+                      rollingInterval: RollingInterval.Day,
+                      retainedFileCountLimit: 14));   // keep 14 days of files
+
+Let us go through each line:
+
+  builder.Host.UseSerilog(...)
+    This replaces the default Microsoft logging with Serilog. From this point
+    on, every ILogger<T> in the entire application is powered by Serilog —
+    even though the code across the project still uses the standard ILogger
+    interface. Serilog is invisible to the rest of the code.
+
+  .ReadFrom.Configuration(ctx.Configuration)
+    This tells Serilog to check appsettings.json for any Serilog configuration.
+    Currently appsettings.json has a "Logging" section with log levels, but no
+    dedicated "Serilog" section. You could add one later without changing code.
+
+  .Enrich.FromLogContext()
+    LogContext is a bag of extra properties that can be attached to any log
+    entry. When we add UserId and UserEmail to the request logs, this enricher
+    is what makes those properties flow through. Without it, those extra fields
+    would be lost.
+
+  .WriteTo.Console()
+    Every log entry also appears in the terminal. When running locally in
+    Visual Studio or via dotnet run, this is what you see in the output window.
+
+  .WriteTo.File("Logs/clinicflow-.log", ...)
+    This is where log files come from. Let us break down the settings:
+
+      Setting                  Value                 What It Means
+      ────────────────────────────────────────────────────────────────────────
+      Path                     Logs/clinicflow-.log  Files go into a Logs/ folder.
+                                                     The dash before .log is where
+                                                     the date gets inserted.
+
+      rollingInterval          RollingInterval.Day   A new file is created every day:
+                                                     clinicflow-20260531.log
+                                                     clinicflow-20260601.log
+
+      retainedFileCountLimit   14                    Only last 14 days kept on disk.
+                                                     Older files are deleted
+                                                     automatically to save space.
+
+WHERE ARE THE LOG FILES?
+  When you run the backend, a Logs/ folder is automatically created inside
+  ClinicFlow-Backend/. Today's log file will be:
+
+    ClinicFlow-Backend/Logs/clinicflow-20260531.log
+
+  You can open this file in any text editor — Notepad, VS Code, Notepad++.
+  Each line is one log event. The file grows as the app runs.
+
+
+================================================================================
+6. HTTP REQUEST LOGGING — UseSerilogRequestLogging
+================================================================================
+
+After the app is built (lower in Program.cs), we add request logging to
+the middleware pipeline:
+
+    app.UseSerilogRequestLogging(opts =>
+    {
+        opts.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+        {
+            var user = httpContext.User;
+            if (user.Identity?.IsAuthenticated == true)
+            {
+                diagnosticContext.Set("UserId",    user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "unknown");
+                diagnosticContext.Set("UserName",  user.FindFirst(ClaimTypes.Name)?.Value           ?? "unknown");
+                diagnosticContext.Set("UserEmail", user.FindFirst(ClaimTypes.Email)?.Value          ?? "unknown");
+                diagnosticContext.Set("UserRole",  user.FindFirst(ClaimTypes.Role)?.Value           ?? "unknown");
+            }
+            else
+            {
+                diagnosticContext.Set("UserId", "anonymous");
+            }
+        };
+    });
+
+────────────────────────────────────────
+6.1  What This Middleware Does
+────────────────────────────────────────
+
+Middleware in ASP.NET Core is like a chain of checkpoints every HTTP request
+passes through. UseSerilogRequestLogging adds a checkpoint that wraps the
+entire request. Here is the exact order of events for ONE request:
+
+  1. HTTP request arrives from the browser/frontend.
+  2. UseSerilogRequestLogging starts a timer.
+  3. The request continues through all other middleware — authentication,
+     authorization, the controller.
+  4. After the controller returns a response, execution comes back here.
+  5. EnrichDiagnosticContext is called — authentication has already run,
+     so the user identity (from JWT) is available.
+  6. UserId, UserName, UserEmail, and UserRole are added to the log context.
+  7. One log line is written with method, path, status code, elapsed time,
+     and user identity.
+
+WHY EnrichDiagnosticContext RUNS AFTER AUTHENTICATION:
+  UseSerilogRequestLogging is registered early in the pipeline, but the
+  enrichment callback runs AFTER the response is complete. This means by the
+  time it runs, UseAuthentication() has already decoded the JWT and populated
+  httpContext.User. So even though the middleware is registered before
+  authentication, it can still read the authenticated user.
+
+────────────────────────────────────────
+6.2  What a Log Line Looks Like
+────────────────────────────────────────
+
+For an authenticated user:
+
+    [2026-05-31 14:23:01 INF] HTTP GET /api/appointments responded 200 in 45.3ms
+      UserId:    a1b2c3d4-0000-0000-0000-000000000001
+      UserName:  John Doe
+      UserEmail: john.doe@clinic.com
+      UserRole:  Clinician
+
+For an unauthenticated request (login, register):
+
+    [2026-05-31 14:20:00 INF] HTTP POST /api/auth/login responded 200 in 88.1ms
+      UserId: anonymous
+
+For a failed request (wrong role, 403):
+
+    [2026-05-31 14:25:00 WRN] HTTP GET /api/audit-logs responded 403 in 5.2ms
+      UserId:    b2c3d4e5-0000-0000-0000-000000000002
+      UserRole:  Patient
+
+
+================================================================================
+7. LOG LEVELS — HOW SERIOUS IS THIS?
+================================================================================
+
+Every log entry has a level that indicates how serious the event is.
+Serilog supports these levels (from least to most serious):
+
+  Level       Code  Used For                                 Example
+  ─────────────────────────────────────────────────────────────────────────────
+  Verbose     VRB   Extremely detailed tracing — rarely used Entering method GetPatientById
+                    in production                             with id=123
+
+  Debug       DBG   Diagnostic information useful during     Cache miss — fetching from
+                    development                               database
+
+  Information INF   Normal events — what the app is doing    HTTP GET /api/patients responded
+                                                             200 in 45ms
+
+  Warning     WRN   Something unexpected but not a failure   HTTP GET responded 403 —
+                                                             access denied
+
+  Error       ERR   A failure that affected one operation    AuditService failed to write log
+
+  Fatal       FTL   The whole application may crash          Database connection missing
+
+CURRENT SETTINGS (appsettings.json):
+  Default level:              Information
+  Microsoft.AspNetCore:       Warning
+
+  This means Verbose and Debug logs are filtered out — not written to file
+  or console. Only Information, Warning, Error, and Fatal are recorded.
+  Microsoft internal framework logs are filtered to Warning so you don't
+  see hundreds of internal messages cluttering the output.
+
+
+================================================================================
+8. HOW ILOGGER IS USED ACROSS THE PROJECT
+================================================================================
+
+Services and other classes do NOT use Serilog directly. They use the standard
+Microsoft ILogger<T> interface. Serilog is plugged in behind the scenes —
+the services don't know or care which logging library is running.
+
+────────────────────────────────────────
+8.1  AuditService.cs
+────────────────────────────────────────
+
+AuditService uses ILogger to record when it fails to write an audit log:
+
+    public class AuditService : IAuditService
+    {
+        private readonly ILogger<AuditService> _logger;
+
+        public async Task LogAsAsync(...)
+        {
+            try { /* write audit row to database */ }
+            catch (Exception ex)
+            {
+                // If the audit write fails, log the error via Serilog
+                // but NEVER crash the request — audit failure is non-fatal
+                _logger.LogError(ex,
+                    "AuditService failed to write log for {Action} on {ResourceType}/{ResourceID}",
+                    action, resourceType, resourceId);
+            }
+        }
+    }
+
+Notice {Action}, {ResourceType}, {ResourceID} in curly braces — these are
+Serilog message templates. Serilog captures these as named properties, not
+just string-substituted text. This makes them searchable.
+
+────────────────────────────────────────
+8.2  ExceptionMiddleware.cs
+────────────────────────────────────────
+
+The global exception handler uses ILogger to record any unhandled exception:
+
+    public class ExceptionMiddleware
+    {
+        private readonly ILogger<ExceptionMiddleware> _logger;
+
+        public async Task InvokeAsync(HttpContext context)
+        {
+            try { await _next(context); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unhandled exception on {Method} {Path}",
+                    context.Request.Method, context.Request.Path);
+
+                context.Response.StatusCode = 500;
+                await context.Response.WriteAsJsonAsync(new { message = "An error occurred" });
+            }
+        }
+    }
+
+This middleware is the safety net. Every exception that is not caught anywhere
+else lands here, gets logged, and the user gets a clean error response instead
+of a crash page.
+
+The exception log entry includes the full stack trace automatically — Serilog
+handles that when you pass the exception object as the first argument to LogError.
+
+
+================================================================================
+9. THE MIDDLEWARE PIPELINE — ORDER MATTERS
+================================================================================
+
+In Program.cs, the order middleware is registered determines the order requests
+pass through them. Here is the full pipeline for ClinicFlow:
+
+  Order  Middleware                          What It Does
+  ─────────────────────────────────────────────────────────────────────────────
+  1      UseSerilogRequestLogging            Starts the timer, wraps everything —
+                                             fires last when response comes back
+
+  2      UseMiddleware<ExceptionMiddleware>   Catches any unhandled exception from
+                                             all code below it
+
+  3      UseSwagger / UseSwaggerUI            Serves the Swagger documentation page
+                                             (dev only)
+
+  4      UseCors                              Applies CORS headers — allows the
+                                             React frontend to call the API
+
+  5      UseAuthentication                    Reads and validates the JWT from the
+                                             Authorization header
+
+  6      UseAuthorization                     Checks the user has the right role
+                                             for the endpoint
+
+  7      MapControllers                       Routes to the correct controller
+                                             and action method
+
+This order is critical:
+  - Authentication MUST come before Authorization
+  - ExceptionMiddleware MUST come early so it catches errors from controllers
+  - Serilog request logging MUST come first so it wraps everything and can
+    measure the total elapsed time including all middleware
+
+
+================================================================================
+10. FULL LOG FLOW — A REAL EXAMPLE
+================================================================================
+
+Let us trace exactly what happens when a Clinician opens a patient record:
+
+  1.  Clinician clicks "View Patient" in the React app.
+
+  2.  Frontend sends:
+        GET /api/patients/123
+        Authorization: Bearer eyJhbG... (JWT token)
+
+  3.  Request enters UseSerilogRequestLogging — timer starts.
+
+  4.  Request enters ExceptionMiddleware — safety net armed.
+
+  5.  Request enters UseAuthentication — JWT is decoded, user identity loaded.
+        UserId:    c3d4e5f6-...
+        UserName:  Dr. Sarah Ahmed
+        UserRole:  Clinician
+
+  6.  Request enters UseAuthorization — Role "Clinician" matches
+        [Authorize(Roles = "Clinician,Admin")] — access granted.
+
+  7.  Request reaches PatientController.GetPatient(123).
+
+  8.  Controller calls PatientService which fetches the record from the database.
+
+  9.  Controller returns 200 OK with the patient JSON.
+
+  10. Response travels back up through the middleware chain.
+
+  11. UseSerilogRequestLogging fires EnrichDiagnosticContext — adds UserId,
+      UserName, UserEmail, UserRole from the JWT claims.
+
+  12. One log line is written to BOTH console AND the daily log file:
+
+        [2026-05-31 14:30:15 INF] HTTP GET /api/patients/123 responded 200 in 32.7ms
+          UserId:    c3d4e5f6-0000-0000-0000-000000000003
+          UserName:  Dr. Sarah Ahmed
+          UserEmail: sarah.ahmed@clinic.com
+          UserRole:  Clinician
+
+  13. Separately, PatientService calls:
+        AuditService.LogAsync("VIEW_PATIENT", "Patient", "123")
+
+  14. AuditService writes a row to the AuditLogs table in SQL Server.
+      This is what the Auditor sees on the web page.
+
+TWO RECORDS, TWO SYSTEMS:
+  The Serilog log line (step 12) → goes to the log file — for developers.
+  The AuditLog row (step 14)    → goes to the database — for the Auditor.
+
+  Both record the same event, but for completely different audiences.
+  If Serilog fails, the audit log still works.
+  If the audit write fails, Serilog logs the error and moves on.
+
+
+================================================================================
+11. HOW TO READ THE LOG FILE
+================================================================================
+
+────────────────────────────────────────
+11.1  Finding the File
+────────────────────────────────────────
+
+Run the backend. After the first request, the file appears at:
+
+    ClinicFlow-Backend/Logs/clinicflow-20260531.log
+
+Open it in VS Code, Notepad++, or any text editor.
+Each line is one log event.
+
+────────────────────────────────────────
+11.2  Understanding the Format
+────────────────────────────────────────
+
+    2026-05-31 14:23:01.543 +00:00 [INF] HTTP POST /api/auth/login responded 200 in 88.1ms
+      { UserId: "anonymous" }
+
+    2026-05-31 14:23:45.102 +00:00 [INF] HTTP GET /api/appointments responded 200 in 45.3ms
+      { UserId: "a1b2-...", UserName: "John Doe", UserEmail: "john@clinic.com", UserRole: "Clinician" }
+
+    2026-05-31 14:24:11.900 +00:00 [ERR] AuditService failed to write log for CREATE_APPOINTMENT on Appointment/abc123
+      System.Exception: Timeout expired. The timeout period elapsed prior to obtaining a connection ...
+        at ClinicFlow_Backend.Services.Implementation.AuditService.LogAsAsync(...)
+
+  Part             Example                                  Meaning
+  ─────────────────────────────────────────────────────────────────────────────
+  Timestamp        2026-05-31 14:23:01.543 +00:00           Exact date and time in UTC
+  Level            [INF]                                    Severity — INF, WRN, ERR, FTL
+  Message          HTTP GET /api/appointments responded...  What happened
+  Properties       UserId, UserName, UserRole               Named structured data
+  Stack Trace      at ClinicFlow_Backend...                 Only on errors — exact location
+                                                            in code where it happened
+
+────────────────────────────────────────
+11.3  Common Things to Look For
+────────────────────────────────────────
+
+  - All [ERR] lines      Any of these is a real problem that needs attention
+  - All [WRN] lines      Usually 403 or 404 — may indicate a frontend bug
+  - Slow requests        Lines where elapsed time is 2000ms or higher
+  - Specific user        Search the file for their UserId or UserEmail
+  - Time range           Narrow to the timestamp when the bug was reported
+
+
+================================================================================
+12. COMPLETE SUMMARY
+================================================================================
+
+  Question                          Answer
+  ─────────────────────────────────────────────────────────────────────────────
+  Why do we log?                    To debug problems, track performance,
+                                    catch errors, and prove what happened
+
+  What is Serilog?                  A structured logging library that powers all
+                                    ILogger<T> calls in the app
+
+  Why Serilog not others?           Best ASP.NET Core integration, structured data,
+                                    easy sinks, widely used
+
+  Where is it configured?           Program.cs — lines 26 to 33
+                                    (builder.Host.UseSerilog)
+
+  Where does it write?              Console (terminal) AND
+                                    Logs/clinicflow-YYYYMMDD.log (file on disk)
+
+  How long are files kept?          14 days — older files deleted automatically
+
+  What is in each log line?         Timestamp, Level, HTTP method + path,
+                                    status code, duration, and (if logged in)
+                                    UserId, UserName, UserEmail, UserRole
+
+  Who reads the logs?               Developers and DevOps
+                                    NOT the Auditor — the Auditor reads from
+                                    the database (AuditLogs table)
+
+  How is the user included?         EnrichDiagnosticContext reads JWT claims
+                                    after authentication runs
+
+  What about errors?                ExceptionMiddleware catches all unhandled
+                                    exceptions and logs them as [ERR]
+
+
+================================================================================
+  END OF DOCUMENT
+  ClinicFlow Healthcare System | Confidential | 2026
+================================================================================
